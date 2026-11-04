@@ -20,9 +20,9 @@ jobs:
         run: |
           sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $sdk = $env:ANDROID_HOME.Replace('\','/')
-          "sdk.dir=$sdk" | Set-Content local.properties
-          "sdk.dir=$sdk" | Set-Content samples/local.properties
+          $sdk = $env:ANDROID_HOME.Replace('\','/').Replace(':','\:')
+          "sdk.dir=$sdk`n" | Set-Content -Encoding ascii -NoNewline local.properties
+          "sdk.dir=$sdk`n" | Set-Content -Encoding ascii -NoNewline samples/local.properties
       - name: Current source host gate
         shell: pwsh
         run: ./scripts/run-gradle.ps1 verifyHost
