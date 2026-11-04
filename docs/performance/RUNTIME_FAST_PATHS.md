@@ -102,8 +102,10 @@ foreach ($p in 1..5) {
   （两处独立，可分别取舍，契约测试已分别锁定）。
 - 快照数组只增长不收缩（通道数峰值决定容量）；关闭时整体置换。极端“峰值后长期低频”场景会保留
   一个小数组，可接受；如确需收缩，应在 close 路径统一处理并补测试。
-- 后续候选（未实施）：`RetiringRegistry.Lease.snapshot()` 免锁读、`BoundedMailbox` 双映射
-  （`states`/`latest`）职责复核、UI 侧 `UiScheduler` 组轮转 O(n²) 与 Batch 分配（由 UI 负责人实施）。
+- 已实施（`96819a2`）：`RetiringRegistry.Lease.snapshot()` 免锁读改为单一 `volatile snapshot`
+  引用，读路径一次 volatile 读；测量与契约见 [REGISTRY_READ_PATH.md](REGISTRY_READ_PATH.md)。
+- 后续候选（未实施）：`BoundedMailbox` 双映射（`states`/`latest`）职责复核、UI 侧 `UiScheduler`
+  组轮转 O(n²) 与 Batch 分配（由 UI 负责人实施）。
 
 ## 环境事实
 
