@@ -31,12 +31,15 @@ public final class BoundedMailbox implements AutoCloseable {
     private boolean paused;
     private boolean closed;
     private boolean ownerCleanupDone;
+    private boolean draining;
     private Runnable closeListener;
     private boolean commandTurn = true;
     private int pendingCommands;
     private long sequence;
     Runnable afterExtract;
     Runnable beforeFinish;
+    /** Reused per-frame extraction batch; package-private for contract tests. */
+    final ArrayList<Item> drainBatch = new ArrayList<>();
 
     public BoundedMailbox(LifecycleScope scope, FrameScheduler scheduler, ErrorSink sink,
                           int stateCapacity, int commandCapacity, int perFrameQuota) {
@@ -118,36 +121,55 @@ public final class BoundedMailbox implements AutoCloseable {
 
     private int drain(FrameTick tick, int quota) {
         owner.checkOwner();
-        List<Item> batch = new ArrayList<>(quota);
-        synchronized (lock) {
-            if (closed || paused) return 0;
-            while (batch.size() < quota && hasWorkLocked()) {
-                Item item;
-                if (!commands.isEmpty() && (commandTurn || states.isEmpty())) item = commands.removeFirst();
-                else {
-                    Iterator<Item> iterator = states.values().iterator();
-                    item = iterator.next(); iterator.remove();
-                }
-                commandTurn = !commandTurn;
-                extracted.add(item); batch.add(item);
-            }
-        }
+        // Reentrancy is unreachable through the public contract (FrameScheduler.schedule never
+        // requests a frame while one is draining, and every delivery is owner-thread checked), but
+        // a reentrant drain must never touch the instance buffer, so it falls back to a local list.
+        // The flag is saved and restored, not cleared: while any outer drain is still iterating the
+        // instance buffer, a nested exit must leave draining set, or a second nested call would
+        // reuse and clear the list the outer loop is still walking.
+        boolean wasDraining = draining;
+        boolean reusing = !draining;
+        List<Item> batch = reusing ? drainBatch : new ArrayList<>(quota);
+        if (reusing) batch.clear();
+        draining = true;
+        int drained;
         try {
-            if (afterExtract != null) afterExtract.run();
-            for (Item item : batch) execute(item);
-        } finally {
-            if (beforeFinish != null) beforeFinish.run();
-            boolean again;
             synchronized (lock) {
-                again = !closed && !paused && hasWorkLocked();
-                if (!again) signal = null;
+                if (closed || paused) return 0;
+                while (batch.size() < quota && hasWorkLocked()) {
+                    Item item;
+                    if (!commands.isEmpty() && (commandTurn || states.isEmpty())) item = commands.removeFirst();
+                    else {
+                        Iterator<Item> iterator = states.values().iterator();
+                        item = iterator.next(); iterator.remove();
+                    }
+                    commandTurn = !commandTurn;
+                    extracted.add(item); batch.add(item);
+                }
             }
-            if (again) {
-                try { channel.requestFrame(); }
-                catch (Throwable failure) { failClosed(failure); }
+            try {
+                if (afterExtract != null) afterExtract.run();
+                for (Item item : batch) execute(item);
+            } finally {
+                if (beforeFinish != null) beforeFinish.run();
+                boolean again;
+                synchronized (lock) {
+                    again = !closed && !paused && hasWorkLocked();
+                    if (!again) signal = null;
+                }
+                if (again) {
+                    try { channel.requestFrame(); }
+                    catch (Throwable failure) { failClosed(failure); }
+                }
             }
+            drained = batch.size();
+        } finally {
+            draining = wasDraining;
+            // Drop item references, which hold the caller's action/release closures, before any
+            // reentrant delivery could observe this buffer again.
+            batch.clear();
         }
-        return batch.size();
+        return drained;
     }
 
     private void execute(Item item) {
