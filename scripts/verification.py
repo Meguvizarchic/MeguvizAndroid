@@ -4,8 +4,10 @@ import argparse
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
+import tempfile
 import time
 import uuid
 import unittest
@@ -233,6 +235,70 @@ def consumer_paths(flavor: str) -> dict[str,Path]:
     return {'apk':base/f'apk/release/{flavor}-release-unsigned.apk','mapping':base/'mapping/release/mapping.txt',
             'debug_apk':base/f'apk/debug/{flavor}-debug.apk','test_apk':base/f'apk/androidTest/debug/{flavor}-debug-androidTest.apk'}
 
+def pin_consumer_publication() -> dict:
+    """Bind exact local candidate checksums explicitly, then require a fresh host verification run."""
+    current_run()
+    publication(require_run=True)
+    target = ROOT/'samples/gradle/verification-metadata.xml'
+    with target.open('rb') as stream:
+        raw = stream.read(2 * 1024 * 1024 + 1)
+    if len(raw) > 2 * 1024 * 1024:
+        raise ValueError('Consumer verification metadata is too large')
+    original = raw.decode('utf-8')
+    if '<!DOCTYPE' in original.upper() or '<!ENTITY' in original.upper():
+        raise ValueError('Consumer verification metadata must not declare DTDs or entities')
+    # Do not parse and reserialize XML: all third-party records and line endings stay byte-for-byte.
+    if re.findall(r'<verify-metadata>\s*(true|false)\s*</verify-metadata>', original) != ['true']:
+        raise ValueError('Consumer metadata verification must remain enabled')
+    updated = original
+    hashes = {}
+    for module in MODULES:
+        artifact = f'meguviz-{module}'
+        aar = artifact_path(module, 'aar')
+        built = ROOT/module/'build/outputs/aar'/f'{module}-release.aar'
+        if not built.is_file() or sha(built) != sha(aar):
+            raise ValueError(f'Published candidate differs from current release output: {module}')
+        pattern = (r'<component group="' + re.escape(GROUP) + r'" name="' + re.escape(artifact)
+                   + r'" version="' + re.escape(VERSION) + r'">.*?</component>')
+        matches = list(re.finditer(pattern, updated, re.DOTALL))
+        if len(matches) != 1:
+            raise ValueError(f'Exactly one pinned candidate component is required: {artifact}')
+        match = matches[0]
+        block = match.group(0)
+        expected = {f'{artifact}-{VERSION}.{extension}' for extension in ('aar', 'module', 'pom')}
+        declarations = re.findall(r'<artifact name="([^"]+)">', block)
+        if len(declarations) != 3 or set(declarations) != expected or len(re.findall(r'<artifact\b', block)) != 3:
+            raise ValueError(f'Candidate artifact set is not exact: {artifact}')
+        for extension in ('aar', 'module', 'pom'):
+            name = f'{artifact}-{VERSION}.{extension}'
+            entry_pattern = r'<artifact name="' + re.escape(name) + r'">(.*?)</artifact>'
+            entries = list(re.finditer(entry_pattern, block, re.DOTALL))
+            if len(entries) != 1 or len(re.findall(r'<sha256\b', entries[0].group(1))) != 1:
+                raise ValueError(f'Exactly one candidate checksum is required: {name}')
+            digest = sha(artifact_path(module, extension))
+            entry = r'(<artifact name="' + re.escape(name) + r'">\s*<sha256 value=")[0-9a-fA-F]{64}("[^>]*?/>)'
+            block, count = re.subn(entry, lambda value: value.group(1) + digest + value.group(2), block)
+            if count != 1:
+                raise ValueError(f'Candidate checksum declaration is ambiguous: {name}')
+            hashes[name] = digest
+        updated = updated[:match.start()] + block + updated[match.end():]
+    current_run()
+    if target.read_bytes() != raw:
+        raise ValueError('Consumer verification metadata changed while preparing pins')
+    if updated != original:
+        staged = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=target.parent, prefix='.candidate-pins-', delete=False) as stream:
+                staged = Path(stream.name)
+                stream.write(updated.encode('utf-8'))
+            os.replace(staged, target)
+        finally:
+            if staged is not None and staged.exists():
+                staged.unlink()
+    return dict(scope='Exact local candidates only; third-party verification unchanged', checksums=hashes,
+                next_step='Start a fresh verifyHost run after this explicit preparation step')
+
+
 def finish_consumer() -> dict:
     marker = bound_marker(ROOT/'build/verification/consumer.started.json')
     consumed = ROOT/'samples/build/consumed-artifacts.json'; fresh(consumed,marker)
@@ -445,7 +511,7 @@ def release(profile: str = 'full_replacement') -> int:
     return 0 if status=='PASS' else 2
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(); parser.add_argument('gate',choices=('host','device','release','hash','publication','start-host','stamp','consumer-start','consumer-end','negatives'))
+    parser=argparse.ArgumentParser(); parser.add_argument('gate',choices=('host','device','release','hash','publication','start-host','stamp','consumer-start','consumer-end','consumer-pin','negatives'))
     parser.add_argument('--module',choices=TEST_MODULES); parser.add_argument('--task')
     parser.add_argument('--profile',choices=tuple(RELEASE_PROFILES),default='full_replacement'); args=parser.parse_args()
     if args.gate=='hash': print(source_hash())
@@ -456,6 +522,7 @@ if __name__=='__main__':
         stamp(ROOT/args.module/f'build/verification/{args.task}.started.json')
     elif args.gate=='consumer-start': stamp(ROOT/'build/verification/consumer.started.json')
     elif args.gate=='consumer-end': finish_consumer()
+    elif args.gate=='consumer-pin': print(json.dumps(pin_consumer_publication(), indent=2))
     elif args.gate=='negatives': raise SystemExit(gate_negatives())
     elif args.gate=='release': raise SystemExit(release(args.profile))
     else: raise SystemExit(globals()[args.gate]())

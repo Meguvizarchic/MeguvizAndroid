@@ -42,8 +42,11 @@ public final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox
   public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox(io.github.jichuo1.meguviz.android.runtime.core.LifecycleScope, io.github.jichuo1.meguviz.android.runtime.core.FrameScheduler, io.github.jichuo1.meguviz.android.runtime.core.ErrorSink, int, int, int);
   public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Slot newSlot();
   public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Submission offerState(io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Slot, io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.lang.Runnable, java.lang.Runnable);
+  public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Submission offerState(io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Slot, io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.lang.Runnable);
   public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Submission offerCommand(io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.lang.Runnable, java.lang.Runnable);
+  public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Submission offerCommand(io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.lang.Runnable);
   public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Submission offerBatch(io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.util.List<java.lang.Runnable>, java.lang.Runnable);
+  public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Submission offerBatch(io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.util.List<java.lang.Runnable>);
   public void setPaused(boolean);
   public int pendingStateCount();
   public int pendingCommandCount();

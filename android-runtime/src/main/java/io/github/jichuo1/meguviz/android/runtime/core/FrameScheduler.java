@@ -23,6 +23,8 @@ public final class FrameScheduler implements AutoCloseable {
     private boolean closed;
     private int cursor;
     private long sequence;
+    /** Reused per-frame snapshot buffer; grows with the channel count. Package-private for contract tests. */
+    BatchEntry[] batchEntries = new BatchEntry[0];
 
     public FrameScheduler(OwnerDispatcher owner, FrameDriver driver, ErrorSink sink, int globalQuota) {
         this.owner = Objects.requireNonNull(owner);
@@ -74,22 +76,39 @@ public final class FrameScheduler implements AutoCloseable {
         owner.checkOwner();
         if (closed || !scheduled) return;
         scheduled = false;
+        // Reentrancy is unreachable through the public contract (schedule never requests a frame
+        // while one is draining), but a reentrant delivery must never share the instance snapshot
+        // buffer, so it falls back to a private array. The flag is saved and restored, not cleared:
+        // while any outer frame is still walking the instance buffer, a nested exit must leave
+        // draining set, or a second nested delivery would reuse and overwrite the outer snapshot.
+        boolean wasDraining = draining;
+        boolean reusing = !draining;
         draining = true;
-        List<BatchEntry> batch = new ArrayList<>();
         int size = channels.size();
         int start = size == 0 ? 0 : cursor % size;
+        BatchEntry[] batch = reusing ? batchEntries : new BatchEntry[0];
+        if (batch.length < size) {
+            BatchEntry[] grown = new BatchEntry[size];
+            batch = grown;
+            if (reusing) batchEntries = grown;
+        }
+        int count = 0;
         for (int offset = 0; offset < size; offset++) {
             FrameChannel channel = channels.get((start + offset) % size);
             if (channel.pending) {
                 channel.pending = false;
-                batch.add(new BatchEntry(channel, channel.cancellation));
+                BatchEntry entry = batch[count];
+                if (entry == null) { entry = new BatchEntry(); batch[count] = entry; }
+                entry.reset(channel, channel.cancellation);
+                count++;
             }
         }
         if (size > 0) cursor = (start + 1) % size;
         int remaining = globalQuota;
         FrameTick tick = new FrameTick(++sequence, time, deadline, presentation);
         try {
-            for (BatchEntry entry : batch) {
+            for (int index = 0; index < count; index++) {
+                BatchEntry entry = batch[index];
                 FrameChannel channel = entry.channel;
                 if (closed) break;
                 entry.processed = true;
@@ -107,10 +126,13 @@ public final class FrameScheduler implements AutoCloseable {
                 }
             }
         } finally {
-            draining = false;
-            for (BatchEntry entry : batch) {
+            draining = wasDraining;
+            for (int index = 0; index < count; index++) {
+                BatchEntry entry = batch[index];
                 if (!entry.processed && entry.channel.callback != null && entry.cancellation == entry.channel.cancellation)
                     entry.channel.pending = true;
+                // Drop the channel reference so a closed or replaced channel is never retained.
+                entry.channel = null;
             }
             schedule();
         }
@@ -135,15 +157,19 @@ public final class FrameScheduler implements AutoCloseable {
             }
         }
         channels.clear();
+        // Replace the snapshot buffer wholesale; an in-flight onFrame keeps its own local array.
+        batchEntries = new BatchEntry[0];
         failures.clearSink();
         if (first != null) failures.reportTo(sink, first);
     }
 
-    private final class BatchEntry {
-        final FrameChannel channel;
-        final long cancellation;
-        boolean processed;
-        BatchEntry(FrameChannel channel, long cancellation) { this.channel = channel; this.cancellation = cancellation; }
+    private static final class BatchEntry {
+        private FrameChannel channel;
+        private long cancellation;
+        private boolean processed;
+        private void reset(FrameChannel channel, long cancellation) {
+            this.channel = channel; this.cancellation = cancellation; this.processed = false;
+        }
     }
 
     public static final class FrameChannel implements AutoCloseable {

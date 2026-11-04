@@ -45,8 +45,14 @@ implementation("io.github.jichuo1.meguviz:meguviz-android-window:1.1.0")
 使用 JDK 25 或 27、Android SDK API 37 与 build-tools 37.0.0；Windows 设置 `JAVA_HOME` 后执行：
 
 ```powershell
+# 显式生成并核验本工具链的本地候选，仅绑定三个自家候选的精确校验值。
+.\scripts\run-gradle.ps1 dumpApi
+python scripts/verification.py consumer-pin
+# 校验值准备改变了样例输入，完整门禁必须重新开始。
 .\scripts\run-gradle.ps1 verifyHost
 ```
+
+`consumer-pin` 只接收本次发布记录中的精确坐标，并要求候选 AAR 与当前 release 输出逐字节一致；第三方依赖校验记录保持原样，不信任整个 group，也不关闭 strict 校验。单独执行 `verifyHost` 时，若样例固定的候选校验值与当前工具链重新构建的字节不一致，会按预期拒绝。完整门禁还会检查独立样例解析的模块集合与字节确实等于本次候选。
 
 本仓库使用独立窗口测试 fixture。GitHub 发布的 Maven 仓库 ZIP 中包含四个模块的 `1.0.0` AAR、POM、Gradle metadata、sources 和 JVM API 签名参考；这些本地制品不代表已在 Maven Central 发布。首次在新检出环境运行时，以本次真实结果为准；不要把其他源码或其他环境的报告当作本仓库的通过证据。设备、物理性能和生产场景另行验证；GitHub Actions 仅支持手动触发。
 

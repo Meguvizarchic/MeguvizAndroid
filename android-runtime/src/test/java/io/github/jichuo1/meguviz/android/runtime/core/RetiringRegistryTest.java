@@ -1,9 +1,11 @@
 package io.github.jichuo1.meguviz.android.runtime.core;
 
 import org.junit.Test;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -161,5 +163,69 @@ public class RetiringRegistryTest {
             finishRelease.countDown();
             executor.shutdownNow();
         }
+    }
+
+    @Test public void closedLeaseClearsSnapshotSlotAndStateFields() throws Exception {
+        RetiringRegistry<String> registry = new RetiringRegistry<>(registry("old"), 1, 2, () -> {});
+        RetiringRegistry.Lease<String> lease = registry.tryAcquire();
+        lease.close();
+        assertNull("snapshot reference must be released", field(lease, "snapshot"));
+        assertNull("slot reference must be released", field(lease, "slot"));
+        assertNull("state reference must be released", field(lease, "state"));
+        registry.close().tryRelease();
+    }
+
+    @Test public void retainedClosedLeaseDisconnectsAllStrongReferences() throws Exception {
+        AdapterRegistry<String> snapshot = registry("old");
+        RetiringRegistry<String> owner = new RetiringRegistry<>(snapshot, 1, 2, () -> {});
+        RetiringRegistry.Lease<String> lease = owner.tryAcquire();
+        RetiringRegistry.Retirement<String> retired = owner.replace(registry("new"), () -> {});
+        Object retiredSlot = field(retired, "slot");
+        assertNotNull("retirement must reference the retired slot before release", retiredSlot);
+        lease.close();
+        assertNotNull("closed lease is deliberately retained", lease);
+        assertNull("retained closed lease snapshot must be null", field(lease, "snapshot"));
+        assertNull("retained closed lease slot must be null", field(lease, "slot"));
+        assertNull("retained closed lease state must be null", field(lease, "state"));
+        assertTrue(retired.tryRelease());
+        assertNull("retirement slot must be cleared", field(retired, "slot"));
+        assertNull("released slot snapshot must be cleared", field(retiredSlot, "snapshot"));
+        Map<?, ?> snapshots = (Map<?, ?>) field(field(owner, "state"), "snapshots");
+        assertFalse("released snapshot must leave the registry map", snapshots.containsKey(snapshot));
+        owner.close().tryRelease();
+        assertTrue("registry map must be empty after every slot is released", snapshots.isEmpty());
+    }
+
+    @Test public void forgetReleasesSlotSnapshotAndRegistryMapEntry() throws Exception {
+        AdapterRegistry<String> snapshot = registry("old");
+        RetiringRegistry<String> owner = new RetiringRegistry<>(snapshot, 1, 2, () -> {});
+        RetiringRegistry.Lease<String> lease = owner.tryAcquire();
+        RetiringRegistry.Retirement<String> retired = owner.replace(registry("new"), () -> {});
+        lease.close();
+        assertTrue(retired.isDrained());
+        assertTrue(retired.tryRelease());
+        assertNull("retirement slot must be cleared", field(retired, "slot"));
+        Map<?, ?> snapshots = (Map<?, ?>) field(field(owner, "state"), "snapshots");
+        assertFalse("released snapshot must leave the registry map", snapshots.containsKey(snapshot));
+        owner.close().tryRelease();
+        assertTrue("registry map must be empty after every slot is released", snapshots.isEmpty());
+    }
+
+    @Test public void crossThreadCloseWithHappensBeforeThenSnapshotThrows() throws Exception {
+        RetiringRegistry<String> owner = new RetiringRegistry<>(registry("old"), 1, 2, () -> {});
+        RetiringRegistry.Lease<String> lease = owner.tryAcquire();
+        CountDownLatch closed = new CountDownLatch(1);
+        Thread closer = new Thread(() -> { lease.close(); closed.countDown(); });
+        closer.start();
+        assertTrue("closer must finish", closed.await(2, TimeUnit.SECONDS));
+        closer.join(2000);
+        assertThrows(IllegalStateException.class, lease::snapshot);
+        owner.close().tryRelease();
+    }
+
+    private static Object field(Object target, String name) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(target);
     }
 }

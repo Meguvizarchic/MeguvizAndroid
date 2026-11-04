@@ -1,9 +1,56 @@
 {
   "schema_version": 1,
   "provenance": "Frozen from current @Test declarations and explicit class @Config SDKs; never inferred from a filtered report",
-  "gate_negative_tests": 50,
+  "gate_negative_tests": 53,
   "modules": {
     "android-runtime": {
+      "io.github.jichuo1.meguviz.android.runtime.core.FrameBufferReuseContractTest": {
+        "methods": [
+          "drainReusesTheSameBufferInstanceAcrossFrames",
+          "drainReusedBufferLeavesNoWorkBehindAcrossFrames",
+          "pausedMailboxDuringDrainLeavesReusableBufferClean",
+          "fatalErrorDuringDrainStillClearsReusedBuffer",
+          "synchronousDriverDeliveryKeepsBufferAndOrderCorrect",
+          "reentrantDrainFallsBackToLocalBatchWithoutCorruptingTheInstanceBuffer",
+          "rotationAndQuotaSurviveChannelCloseAndOpenInsideFrame",
+          "snapshotBufferGrowsWhenChannelsAppearAndKeepsRotation",
+          "fatalChannelCallbackClearsSchedulerSnapshotBuffer",
+          "consecutiveReentrantDrainsDoNotResetDrainingForTheOuterBatch",
+          "schedulerSnapshotEntriesAreReusedAcrossFrames"
+        ],
+        "sdks": [],
+        "expected_cases": 11,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/FrameBufferReuseContractTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.runtime.core.MailboxBackgroundProducerExampleTest": {
+        "methods": [
+          "backgroundProducersCoalescePerKeyAndKeepPerProducerFifo",
+          "backgroundStormKeepsOneOutstandingWakeupAndBoundedStorage",
+          "backgroundBackpressureRejectsNewKeysButAllowsReplacement",
+          "backgroundActionFailureClosesMailboxAndStillReleasesEveryPayload",
+          "ownerCloseReleasesPendingBackgroundWorkExactlyOnce"
+        ],
+        "sdks": [],
+        "expected_cases": 5,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/MailboxBackgroundProducerExampleTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.runtime.core.MailboxConvenienceContractTest": {
+        "methods": [
+          "shorthandMatchesLegacyAdmissionCoalescingAndFifoOrder",
+          "shorthandRejectsCapacityExactlyLikeLegacy",
+          "shorthandCloseReleasesPendingWithoutRunningActionsOrCallerCleanup",
+          "shorthandPreservesForeignOwnershipRejection",
+          "shorthandMultiProducerCoalescesAndKeepsPerProducerFifo",
+          "shorthandBatchOrderAndPartialFailureMatchLegacy",
+          "shorthandBatchSnapshotsCallerList",
+          "shorthandStaleTokenDoesNotRunActionLikeLegacy",
+          "shorthandSupersededAndCancelledOutcomesMatchLegacy",
+          "shorthandDelegatesBatchValidation"
+        ],
+        "sdks": [],
+        "expected_cases": 10,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/MailboxConvenienceContractTest.java"
+      },
       "io.github.jichuo1.meguviz.android.runtime.core.FrameSchedulerContractTest": {
         "methods": [
           "registrationDoesNotScheduleAndRepeatedRequestsCoalesce",
@@ -154,10 +201,14 @@
           "releaseFailureIsTerminalAndCallbacksRunOutsideTheLock",
           "concurrentAcquisitionAndPublicationDrainAllRetiredSnapshots",
           "invalidBoundsAndSameSnapshotAreRejected",
-          "snapshotCannotBeReusedUntilItsReleaseActionFinishes"
+          "snapshotCannotBeReusedUntilItsReleaseActionFinishes",
+          "closedLeaseClearsSnapshotSlotAndStateFields",
+          "retainedClosedLeaseDisconnectsAllStrongReferences",
+          "forgetReleasesSlotSnapshotAndRegistryMapEntry",
+          "crossThreadCloseWithHappensBeforeThenSnapshotThrows"
         ],
         "sdks": [],
-        "expected_cases": 6,
+        "expected_cases": 10,
         "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/RetiringRegistryTest.java"
       },
       "io.github.jichuo1.meguviz.android.runtime.platform.FrameDriverRequestIsolationTest": {

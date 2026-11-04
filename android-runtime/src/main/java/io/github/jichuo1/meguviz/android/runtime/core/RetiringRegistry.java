@@ -53,18 +53,24 @@ public final class RetiringRegistry<T> {
     }
 
     public static final class Lease<T> implements AutoCloseable {
+        /**
+         * Immutable snapshot and open/closed sentinel in one volatile reference. Close clears it under the
+         * state monitor, so a retained closed lease pins neither the snapshot nor its providers.
+         */
+        private volatile AdapterRegistry<T> snapshot;
         private volatile State<T> state;
         private Slot<T> slot;
 
-        private Lease(State<T> state, Slot<T> slot) { this.state = state; this.slot = slot; }
+        private Lease(State<T> state, Slot<T> slot) {
+            this.snapshot = slot.snapshot;
+            this.slot = slot;
+            this.state = state;
+        }
 
         public AdapterRegistry<T> snapshot() {
-            State<T> owner = state;
-            if (owner == null) throw new IllegalStateException("Lease is closed");
-            synchronized (owner) {
-                if (slot == null) throw new IllegalStateException("Lease is closed");
-                return slot.snapshot;
-            }
+            AdapterRegistry<T> current = snapshot;
+            if (current == null) throw new IllegalStateException("Lease is closed");
+            return current;
         }
 
         @Override public void close() {
@@ -75,6 +81,7 @@ public final class RetiringRegistry<T> {
                 slot.leases--;
                 owner.activeLeases--;
                 slot = null;
+                snapshot = null;
                 state = null;
             }
         }

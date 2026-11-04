@@ -14,6 +14,9 @@ public final class BoundedMailbox implements AutoCloseable {
     public enum Outcome { PENDING, RUNNING, COMPLETED, CANCELLED, SUPERSEDED, STALE, INACTIVE, FAILED, CLOSED }
     public enum Cancellation { CANCELLED, ALREADY_RUNNING, ALREADY_TERMINAL }
 
+    /** Shared release for the no-cleanup shorthand overloads; never null, never observable. */
+    private static final Runnable NOOP_RELEASE = () -> {};
+
     private final Object lock = new Object();
     private final Object identity = new Object();
     private final LifecycleScope scope;
@@ -31,12 +34,15 @@ public final class BoundedMailbox implements AutoCloseable {
     private boolean paused;
     private boolean closed;
     private boolean ownerCleanupDone;
+    private boolean draining;
     private Runnable closeListener;
     private boolean commandTurn = true;
     private int pendingCommands;
     private long sequence;
     Runnable afterExtract;
     Runnable beforeFinish;
+    /** Reused per-frame extraction batch; package-private for contract tests. */
+    final ArrayList<Item> drainBatch = new ArrayList<>();
 
     public BoundedMailbox(LifecycleScope scope, FrameScheduler scheduler, ErrorSink sink,
                           int stateCapacity, int commandCapacity, int perFrameQuota) {
@@ -55,14 +61,26 @@ public final class BoundedMailbox implements AutoCloseable {
         if (slot == null || slot.mailboxIdentity != identity) return new Submission(Admission.UNSUPPORTED, null);
         return offer(slot, token, callback, release);
     }
+    /** State offer without a caller-owned cleanup: admission, coalescing and token checks are identical. */
+    public Submission offerState(Slot slot, WorkToken token, Runnable callback) {
+        return offerState(slot, token, callback, NOOP_RELEASE);
+    }
     public Submission offerCommand(WorkToken token, Runnable callback, Runnable release) {
         return offer(null, token, callback, release);
+    }
+    /** Command offer without a caller-owned cleanup: FIFO admission and token checks are identical. */
+    public Submission offerCommand(WorkToken token, Runnable callback) {
+        return offerCommand(token, callback, NOOP_RELEASE);
     }
     public Submission offerBatch(WorkToken token, List<Runnable> callbacks, Runnable release) {
         final List<Runnable> copy = new ArrayList<>(callbacks);
         for (Runnable callback : copy) Objects.requireNonNull(callback);
         if (copy.isEmpty()) throw new IllegalArgumentException("Empty batch");
         return offerCommand(token, () -> { for (Runnable callback : copy) callback.run(); }, release);
+    }
+    /** Batch offer without a caller-owned cleanup: same snapshot, order and token checks. */
+    public Submission offerBatch(WorkToken token, List<Runnable> callbacks) {
+        return offerBatch(token, callbacks, NOOP_RELEASE);
     }
 
     private Submission offer(Slot slot, WorkToken token, Runnable callback, Runnable release) {
@@ -118,36 +136,55 @@ public final class BoundedMailbox implements AutoCloseable {
 
     private int drain(FrameTick tick, int quota) {
         owner.checkOwner();
-        List<Item> batch = new ArrayList<>(quota);
-        synchronized (lock) {
-            if (closed || paused) return 0;
-            while (batch.size() < quota && hasWorkLocked()) {
-                Item item;
-                if (!commands.isEmpty() && (commandTurn || states.isEmpty())) item = commands.removeFirst();
-                else {
-                    Iterator<Item> iterator = states.values().iterator();
-                    item = iterator.next(); iterator.remove();
-                }
-                commandTurn = !commandTurn;
-                extracted.add(item); batch.add(item);
-            }
-        }
+        // Reentrancy is unreachable through the public contract (FrameScheduler.schedule never
+        // requests a frame while one is draining, and every delivery is owner-thread checked), but
+        // a reentrant drain must never touch the instance buffer, so it falls back to a local list.
+        // The flag is saved and restored, not cleared: while any outer drain is still iterating the
+        // instance buffer, a nested exit must leave draining set, or a second nested call would
+        // reuse and clear the list the outer loop is still walking.
+        boolean wasDraining = draining;
+        boolean reusing = !draining;
+        List<Item> batch = reusing ? drainBatch : new ArrayList<>(quota);
+        if (reusing) batch.clear();
+        draining = true;
+        int drained;
         try {
-            if (afterExtract != null) afterExtract.run();
-            for (Item item : batch) execute(item);
-        } finally {
-            if (beforeFinish != null) beforeFinish.run();
-            boolean again;
             synchronized (lock) {
-                again = !closed && !paused && hasWorkLocked();
-                if (!again) signal = null;
+                if (closed || paused) return 0;
+                while (batch.size() < quota && hasWorkLocked()) {
+                    Item item;
+                    if (!commands.isEmpty() && (commandTurn || states.isEmpty())) item = commands.removeFirst();
+                    else {
+                        Iterator<Item> iterator = states.values().iterator();
+                        item = iterator.next(); iterator.remove();
+                    }
+                    commandTurn = !commandTurn;
+                    extracted.add(item); batch.add(item);
+                }
             }
-            if (again) {
-                try { channel.requestFrame(); }
-                catch (Throwable failure) { failClosed(failure); }
+            try {
+                if (afterExtract != null) afterExtract.run();
+                for (Item item : batch) execute(item);
+            } finally {
+                if (beforeFinish != null) beforeFinish.run();
+                boolean again;
+                synchronized (lock) {
+                    again = !closed && !paused && hasWorkLocked();
+                    if (!again) signal = null;
+                }
+                if (again) {
+                    try { channel.requestFrame(); }
+                    catch (Throwable failure) { failClosed(failure); }
+                }
             }
+            drained = batch.size();
+        } finally {
+            draining = wasDraining;
+            // Drop item references, which hold the caller's action/release closures, before any
+            // reentrant delivery could observe this buffer again.
+            batch.clear();
         }
-        return batch.size();
+        return drained;
     }
 
     private void execute(Item item) {
