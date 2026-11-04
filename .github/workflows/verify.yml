@@ -23,6 +23,13 @@ jobs:
           $sdk = $env:ANDROID_HOME.Replace('\','/').Replace(':','\:')
           "sdk.dir=$sdk`n" | Set-Content -Encoding ascii -NoNewline local.properties
           "sdk.dir=$sdk`n" | Set-Content -Encoding ascii -NoNewline samples/local.properties
+      - name: Prepare exact local candidate inputs
+        shell: pwsh
+        run: |
+          ./scripts/run-gradle.ps1 dumpApi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/verification.py consumer-pin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Current source host gate
         shell: pwsh
         run: ./scripts/run-gradle.ps1 verifyHost

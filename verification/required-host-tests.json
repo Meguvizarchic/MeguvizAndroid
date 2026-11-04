@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "provenance": "Frozen from current @Test declarations and explicit class @Config SDKs; never inferred from a filtered report",
-  "gate_negative_tests": 50,
+  "gate_negative_tests": 53,
   "modules": {
     "android-runtime": {
       "io.github.jichuo1.meguviz.android.runtime.core.FrameBufferReuseContractTest": {

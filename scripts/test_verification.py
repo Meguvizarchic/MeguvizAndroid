@@ -70,6 +70,43 @@ class GateRejectionTest(unittest.TestCase):
         self.json('build/verification/api.json',dict(gate.current_run(),modules=modules))
     def lint(self,module='android-runtime'):
         self.marker(module,'lintReportDebug'); return self.put(module+'/build/reports/lint-results-debug.xml','<issues format="6"/>')
+    def consumer_metadata(self, duplicate=False):
+        blocks = []
+        for module in gate.MODULES:
+            artifact = 'meguviz-' + module
+            entries = ''.join(f'<artifact name="{artifact}-{gate.VERSION}.{extension}"><sha256 value="{"0"*64}" origin="fixture"/></artifact>'
+                              for extension in ('aar','module','pom'))
+            blocks.append(f'<component group="{gate.GROUP}" name="{artifact}" version="{gate.VERSION}">{entries}</component>')
+        if duplicate: blocks.append(blocks[0])
+        third_party = '<component group="example.external" name="dependency" version="1"><artifact name="dependency.jar"><sha256 value="' + 'a'*64 + '"/></artifact></component>'
+        return self.put('samples/gradle/verification-metadata.xml',
+            '<verification-metadata xmlns="https://schema.gradle.org/dependency-verification"><configuration><verify-metadata>true</verify-metadata></configuration><components>'
+            + third_party + ''.join(blocks) + '</components></verification-metadata>')
+    def candidate_release_outputs(self):
+        for module in gate.MODULES:
+            target = gate.ROOT/module/'build/outputs/aar'/f'{module}-release.aar'
+            target.parent.mkdir(parents=True,exist_ok=True)
+            target.write_bytes(gate.artifact_path(module,'aar').read_bytes())
+    def test_consumer_pin_preserves_third_party_and_requires_fresh_host(self):
+        target=self.consumer_metadata(); gate.begin_host()
+        self.publications(); self.candidate_release_outputs(); before=target.read_bytes()
+        result=gate.pin_consumer_publication(); after=target.read_bytes()
+        self.assertEqual(9,len(result['checksums']))
+        own=r'<component group="'+gate.GROUP+r'".*?</component>'
+        self.assertEqual(gate.re.sub(own,'',before.decode()),gate.re.sub(own,'',after.decode()))
+        for digest in result['checksums'].values(): self.assertIn(digest.encode(),after)
+        with self.assertRaisesRegex(ValueError,'Stale or invalid host'): gate.current_run()
+    def test_consumer_pin_rejects_mismatched_release_without_writing(self):
+        target=self.consumer_metadata(); gate.begin_host()
+        self.publications(); self.candidate_release_outputs(); before=target.read_bytes()
+        self.put('android-runtime/build/outputs/aar/android-runtime-release.aar','foreign bytes')
+        with self.assertRaisesRegex(ValueError,'differs from current release'): gate.pin_consumer_publication()
+        self.assertEqual(before,target.read_bytes())
+    def test_consumer_pin_rejects_ambiguous_components_without_writing(self):
+        target=self.consumer_metadata(duplicate=True); gate.begin_host()
+        self.publications(); self.candidate_release_outputs(); before=target.read_bytes()
+        with self.assertRaisesRegex(ValueError,'Exactly one pinned candidate'): gate.pin_consumer_publication()
+        self.assertEqual(before,target.read_bytes())
     def test_complete_structural_host_evidence_is_accepted(self):
         for module in gate.TEST_MODULES: self.reports(module); self.lint(module)
         self.publications(); self.consumer(); self.api()
