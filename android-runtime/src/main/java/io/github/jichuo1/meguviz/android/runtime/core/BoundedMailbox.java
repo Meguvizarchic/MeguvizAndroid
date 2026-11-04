@@ -14,6 +14,9 @@ public final class BoundedMailbox implements AutoCloseable {
     public enum Outcome { PENDING, RUNNING, COMPLETED, CANCELLED, SUPERSEDED, STALE, INACTIVE, FAILED, CLOSED }
     public enum Cancellation { CANCELLED, ALREADY_RUNNING, ALREADY_TERMINAL }
 
+    /** Shared release for the no-cleanup shorthand overloads; never null, never observable. */
+    private static final Runnable NOOP_RELEASE = () -> {};
+
     private final Object lock = new Object();
     private final Object identity = new Object();
     private final LifecycleScope scope;
@@ -58,14 +61,26 @@ public final class BoundedMailbox implements AutoCloseable {
         if (slot == null || slot.mailboxIdentity != identity) return new Submission(Admission.UNSUPPORTED, null);
         return offer(slot, token, callback, release);
     }
+    /** State offer without a caller-owned cleanup: admission, coalescing and token checks are identical. */
+    public Submission offerState(Slot slot, WorkToken token, Runnable callback) {
+        return offerState(slot, token, callback, NOOP_RELEASE);
+    }
     public Submission offerCommand(WorkToken token, Runnable callback, Runnable release) {
         return offer(null, token, callback, release);
+    }
+    /** Command offer without a caller-owned cleanup: FIFO admission and token checks are identical. */
+    public Submission offerCommand(WorkToken token, Runnable callback) {
+        return offerCommand(token, callback, NOOP_RELEASE);
     }
     public Submission offerBatch(WorkToken token, List<Runnable> callbacks, Runnable release) {
         final List<Runnable> copy = new ArrayList<>(callbacks);
         for (Runnable callback : copy) Objects.requireNonNull(callback);
         if (copy.isEmpty()) throw new IllegalArgumentException("Empty batch");
         return offerCommand(token, () -> { for (Runnable callback : copy) callback.run(); }, release);
+    }
+    /** Batch offer without a caller-owned cleanup: same snapshot, order and token checks. */
+    public Submission offerBatch(WorkToken token, List<Runnable> callbacks) {
+        return offerBatch(token, callbacks, NOOP_RELEASE);
     }
 
     private Submission offer(Slot slot, WorkToken token, Runnable callback, Runnable release) {

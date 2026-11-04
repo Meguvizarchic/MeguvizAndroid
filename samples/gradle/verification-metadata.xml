@@ -2220,10 +2220,10 @@
       </component>
       <component group="io.github.jichuo1.meguviz" name="meguviz-android-runtime" version="1.1.0">
          <artifact name="meguviz-android-runtime-1.1.0.aar">
-            <sha256 value="a6e8520c86f5c56776cbda6e0edd79b36e03df4ddc348b16dfe90a5e2d699bd9" origin="Exact local 1.1.0 publication"/>
+            <sha256 value="d5aafe840f8eb45c6eb5c36ca292c6597dd1a64e9c9c1474e05fa21e8756ac5f" origin="Exact local 1.1.0 publication"/>
          </artifact>
          <artifact name="meguviz-android-runtime-1.1.0.module">
-            <sha256 value="519916ff37ebc858ab375e022591112fe85d8910806a3725c11beb948b77e6b9" origin="Exact local 1.1.0 publication"/>
+            <sha256 value="23a070469af0f2b90c6ce6ebf901d9ff333df8fbefe033fadf4f70b0c82452aa" origin="Exact local 1.1.0 publication"/>
          </artifact>
          <artifact name="meguviz-android-runtime-1.1.0.pom">
             <sha256 value="57031e2db53bba2fe4423b67952117230528b9346d921e3882340b84c6a25190" origin="Exact local 1.1.0 publication"/>
@@ -2231,10 +2231,10 @@
       </component>
       <component group="io.github.jichuo1.meguviz" name="meguviz-android-window" version="1.1.0">
          <artifact name="meguviz-android-window-1.1.0.aar">
-            <sha256 value="d233a8c4e70dfaf7202a9e8a43dcd853b9c476453414b0e4b26df9f43da27ac5" origin="Exact local 1.1.0 publication"/>
+            <sha256 value="2dee1734ad674643dfb7270a8a5eeaa62e69d8b67fe219c47450470cd8ac157e" origin="Exact local 1.1.0 publication"/>
          </artifact>
          <artifact name="meguviz-android-window-1.1.0.module">
-            <sha256 value="837d9bf90bbcecb727eb0126b6d48fb0b6564820c1d3d955d7411c9330dd6ac0" origin="Exact local 1.1.0 publication"/>
+            <sha256 value="c2506b7dfb2f9d143a632fecb7035dbc575aa6d410d1d2efc7b8491fbbeab2c6" origin="Exact local 1.1.0 publication"/>
          </artifact>
          <artifact name="meguviz-android-window-1.1.0.pom">
             <sha256 value="1d5860569d905c255cae4f8a64fa25278ffe560373357d718e0195557c77b91b" origin="Exact local 1.1.0 publication"/>
@@ -2242,10 +2242,10 @@
       </component>
       <component group="io.github.jichuo1.meguviz" name="meguviz-android-lifecycle" version="1.1.0">
          <artifact name="meguviz-android-lifecycle-1.1.0.aar">
-            <sha256 value="0a3f8170e2ea47f50094cea6684737f1d7581fdf9b097bdc51d7771e45a47d26" origin="Exact local 1.1.0 publication"/>
+            <sha256 value="764073af0b2afd165ab01ba623647be9bf0c0ac5249cca6011ac35aa30e17162" origin="Exact local 1.1.0 publication"/>
          </artifact>
          <artifact name="meguviz-android-lifecycle-1.1.0.module">
-            <sha256 value="1f5f59473d70a77fd0f8a11e6993706297bb3f3c4b564d3c04a777a53f38355b" origin="Exact local 1.1.0 publication"/>
+            <sha256 value="d31a42636c4080edb40fed4797ac0668ec663f26893fcfaa990734add8bf1f4f" origin="Exact local 1.1.0 publication"/>
          </artifact>
          <artifact name="meguviz-android-lifecycle-1.1.0.pom">
             <sha256 value="7bd6c74befed4d652789f8c88d7114702b6da48620a5d0286a93c48dfe53dc5f" origin="Exact local 1.1.0 publication"/>
