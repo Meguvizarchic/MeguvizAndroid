@@ -93,6 +93,25 @@ public class MailboxContractTest {
         assertEquals(0, box.pendingCommandCount());
     }
 
+    /**
+     * The idle-wake cancel must re-check before cancelling: an inline dispatcher may already have
+     * run the re-armed wakeup and requested a frame, and cancelling it would drop a live request
+     * with no queued runnable left to recover it.
+     */
+    @Test public void idleWakeCancelDoesNotDropAFrameRequestedByAnInlineWakeup() {
+        BoundedMailbox box = mailbox(1, 4, 4); Slot slot = box.newSlot();
+        WorkHandle first = box.offerCommand(token, () -> fail("cancelled"), () -> { }).handle();
+        // Inline: the re-armed Signal runs immediately on the owner and requests a frame.
+        box.idleWakeProbe = () -> box.offerCommand(token, () -> commits.add(9), () -> { });
+        assertEquals(Cancellation.CANCELLED, first.cancel());
+        box.idleWakeProbe = null;
+
+        // Without the re-check the fresh frame request would be cancelled here.
+        assertTrue("the inline wakeup's frame request must survive", runtime.hasFrame());
+        runtime.drain();
+        assertEquals(Arrays.asList(9), commits);
+    }
+
     @Test public void cancellationReleasesCapacityAndPreventsLateCallback() {
         BoundedMailbox box = mailbox(1, 1, 1);
         WorkHandle first = box.offerCommand(token, () -> fail("cancelled"), releases::incrementAndGet).handle();
