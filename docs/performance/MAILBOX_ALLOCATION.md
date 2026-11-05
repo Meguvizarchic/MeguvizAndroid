@@ -58,6 +58,21 @@ java -cp <out> FrameBufferBenchmark 8 16 20000 15000 3
 `MailboxContractTest`、`MailboxConvenienceContractTest`、`MailboxBackgroundProducerExampleTest`
 全绿；`:android-runtime:testDebugUnitTest` 在 JDK 21 下通过。
 
+## 2026-11-05（第四轮）：唤醒停摆修复与关闭路径加固
+
+| 改动 | 位置 | 说明 |
+| --- | --- | --- |
+| 删除共享 `Signal` 的 identity remove | `BoundedMailbox.post` / `cancelIdleWake` | `signal` 单实例复用，按对象同一性 `owner.remove` 会删除并发生产者重新投递的唤醒，导致 `signalPending==true` 但队列无回调 → 邮箱永久停摆。`Signal.run` 已重查标志，陈旧唤醒只空跑一次 |
+| 非 owner 线程失败延迟清理 | `terminateAll` / 新增 `ownerCleanup()` | 生产者线程失败时把 `channel.close()` + `scope.release` 投递到 owner；`ownerCleanupDone` 保证与后续 scope 关闭幂等；post 被拒则回退到 scope close |
+| 取消端检查 | 新增 `removeQueued(ArrayDeque, T)` | 先查 head 再查 tail 再线性 remove；生产者通常取消刚提交的尾部项，`ArrayDeque.remove(Object)` 总是从头扫描 |
+| 帧回调失败合并 | `FrameScheduler.onFrame` | `channel.close()` 抛错不再掩盖原始 drain 失败，用 `Failures.combine` 合并后上报 |
+
+**P0 停摆**的确定性复现（门控探针）：基线 `pending_after_race=1, queued_signals=0, has_frame=false`，再 offer 两次仍无帧 → `PERMANENTLY_STUCK=true`；修复后 `pending_after_race=0, frames_after_race=1`。不加人为延迟的 3000 轮 × 2 生产者压测（约 9900 万次 offer）0 次命中——窗口很窄，但一旦命中不可自愈。
+
+**取消端检查**实测（单线程隔离，p50）：depth 4096 时尾部取消 3100 ns → 201 ns（约 15×）；head 取消不受影响。注意仓库内暂无生产 `cancel()` 调用点，收益取决于消费者用法，不作为性能承诺。
+
+验证：`:android-runtime:testDebugUnitTest`（71 项）与 `:android-window:testDebugUnitTest`（91 项）通过；新增断言覆盖「生产者线程 release 抛错 → pumpSignals 后 channel/registration 归零」与「取消空闲唤醒后仍能投递并 drain」。API 基线不变。
+
 ## 残余风险与后续
 
 - `extracted.remove(Object)` 对乱序 cancel 为 O(quota)；quota 极大且乱序 cancel 密集时需复测。
