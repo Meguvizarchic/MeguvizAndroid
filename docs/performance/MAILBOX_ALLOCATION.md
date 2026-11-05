@@ -86,3 +86,9 @@ ABBA 交错（JDK 21，8 邮箱 × 16 slot × 20000 帧，`FrameBufferBenchmark 
 稳态 4968 → 3880 B/帧，约 **-21.9%**；`executed_ops` 两侧均为 480000。`:android-runtime:testDebugUnitTest`（70 项）与 `:android-window:testDebugUnitTest` 通过；`javap -public` 全量对比 before/after 逐字节相同，`api/android-runtime.txt` 不变。
 
 残余：`signalPending` 保证不漏唤醒、不多请求平台帧，但不保证 owner 队列里只有一份 `Signal`——门控 dispatcher 在「拿到 dispatch 后、`release()`/`owner.post` 前被抢占」的窗口下可能重复入队，多余的那份因标志早退（不会多请求帧，也不漏项）；`stateQueue.remove` 对「取消已排队状态项」为 O(n)（`capacity ≤ 256` 时在噪声内，1024 + 逆序密集取消约 2.5×，且 `WorkHandle.cancel()` 可从后台线程调用、持锁期间拖住 owner）；`extracted.remove` 对乱序 cancel 为 O(quota)。host 数据不构成 ART/真机结论。
+
+## 2026-11-05（第三轮）：构造器通道泄漏加固
+
+`BoundedMailbox` 构造器在 `scheduler.openChannel` 成功后用 `scope.own` 登记清理；若并发 `requestClose()` 使 `scope.own` 抛错，通道已注册进 `FrameScheduler.channels` 且回调持有 `this::drain`，调用方拿不到 mailbox 无法 close，通道成僵尸（每次 `onFrame` 仍遍历它）。
+
+现在把 `scope.own` 包进 try，失败时关闭通道并 `addSuppressed`；`channel.onClose` 注册移到 own 成功之后。合同：`MailboxContractTest.closedScopeConstructorReleasesOpenedChannel`（先 `scope.close()` 再构造，断言抛错且 `channelCount() == 0`；修复前为 1）。窗口侧的同类注册泄漏见 [Insets 分发与注册泄漏加固](WINDOW_DISPATCH.md)。
