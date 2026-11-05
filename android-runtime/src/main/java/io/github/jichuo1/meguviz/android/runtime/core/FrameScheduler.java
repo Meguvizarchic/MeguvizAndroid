@@ -121,7 +121,9 @@ public final class FrameScheduler implements AutoCloseable {
                     remaining -= Math.max(1, consumed);
                 } catch (Throwable failure) {
                     remaining -= quota;
-                    channel.close();
+                    // A throwing close listener must not hide the original drain failure.
+                    try { channel.close(); }
+                    catch (Throwable cleanup) { failure = Failures.combine(failure, cleanup); }
                     failures.report(failure);
                 }
             }

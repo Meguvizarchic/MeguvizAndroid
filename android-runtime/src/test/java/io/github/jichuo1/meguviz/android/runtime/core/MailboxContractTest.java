@@ -75,6 +75,17 @@ public class MailboxContractTest {
         assertTrue(box.offerCommand(token, () -> commits.add(2), releases::incrementAndGet).accepted());
         runtime.drain(); assertEquals(Arrays.asList(2), commits); assertEquals(2, releases.get());
 
+        // Cancelling the idle wake must not delete a wakeup that a concurrent producer re-armed
+        // on the shared Signal instance; the mailbox must keep requesting frames afterwards.
+        releases.set(0); commits.clear();
+        BoundedMailbox reused = mailbox(1, 1, 1);
+        WorkHandle cancelled = reused.offerCommand(token, () -> fail("cancelled"), releases::incrementAndGet).handle();
+        assertEquals(Cancellation.CANCELLED, cancelled.cancel());
+        assertFalse(runtime.hasFrame());
+        assertTrue(reused.offerCommand(token, () -> commits.add(3), releases::incrementAndGet).accepted());
+        runtime.drain();
+        assertEquals(Arrays.asList(3), commits);
+
         releases.set(0);
         BoundedMailbox extracted = mailbox(1, 1, 1);
         WorkHandle handle = extracted.offerCommand(token, () -> fail("cancelled extracted"), releases::incrementAndGet).handle();
@@ -178,7 +189,23 @@ public class MailboxContractTest {
         ControlledRuntime.background(() -> offered.set(box.offerCommand(token, () -> fail("no dispatcher"), releases::incrementAndGet)));
         assertTrue(offered.get().accepted()); assertEquals(Outcome.FAILED, offered.get().handle().outcome());
         assertEquals(1, releases.get()); assertTrue(box.isClosed());
+        // rejectPost is still true here, so the deferred owner cleanup cannot be posted and the
+        // scope close path remains the fallback; close() releases the channel explicitly.
         box.close(); assertEquals(0, scheduler.channelCount()); assertEquals(0, scope.registrationCount());
+        runtime.rejectPost = false;
+
+        // A producer-thread failure with a working dispatcher releases the channel and
+        // registration from the posted owner cleanup, without an explicit close(). A release
+        // that throws while superseding an item is the producer-side failure path.
+        releases.set(0);
+        BoundedMailbox deferred = mailbox(1, 1, 1); Slot deferredSlot = deferred.newSlot();
+        deferred.offerState(deferredSlot, token, () -> { }, () -> { throw new IllegalStateException("release failed"); });
+        AtomicReference<Submission> deferredOffered = new AtomicReference<>();
+        ControlledRuntime.background(() -> deferredOffered.set(
+                deferred.offerState(deferredSlot, token, () -> { }, releases::incrementAndGet)));
+        assertTrue(deferred.isClosed());
+        runtime.pumpSignals();
+        assertEquals(0, scheduler.channelCount()); assertEquals(0, scope.registrationCount());
         runtime.rejectPost = false;
 
         releases.set(0);

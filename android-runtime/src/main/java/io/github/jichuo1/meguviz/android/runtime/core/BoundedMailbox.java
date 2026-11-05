@@ -135,9 +135,10 @@ public final class BoundedMailbox implements AutoCloseable {
         try { accepted = owner.post(pending); }
         catch (Throwable failure) { failClosed(failure); return; }
         if (!accepted) { failClosed(new IllegalStateException("Owner dispatcher rejected mailbox wakeup")); return; }
-        boolean obsolete;
-        synchronized (lock) { obsolete = !signalPending || paused || closed; }
-        if (obsolete) owner.remove(pending);
+        // Do not owner.remove(pending) here: the signal instance is shared, so a producer that
+        // re-arms it between this post and the check would lose its wakeup. Signal.run re-checks
+        // signalPending/paused/closed and exits without requesting a frame, so a stale wakeup is
+        // only one wasted runnable, never a lost wakeup.
     }
 
     private final class Signal implements Runnable {
@@ -241,11 +242,11 @@ public final class BoundedMailbox implements AutoCloseable {
         Outcome previous = item.handle.outcome;
         if (previous != Outcome.PENDING && previous != Outcome.RUNNING) return null;
         if (previous == Outcome.PENDING) {
-            extracted.remove(item);
-            if (item.slot == null) { commands.remove(item); pendingCommands--; }
+            removeQueued(extracted, item);
+            if (item.slot == null) { removeQueued(commands, item); pendingCommands--; }
             else {
                 if (removeStatePosition && item.slot.queued && latest.get(item.slot) == item) {
-                    stateQueue.remove(item.slot);
+                    removeQueued(stateQueue, item.slot);
                     item.slot.queued = false;
                 }
                 if (latest.get(item.slot) == item) latest.remove(item.slot);
@@ -256,6 +257,17 @@ public final class BoundedMailbox implements AutoCloseable {
         Terminal terminal = new Terminal(item.release, item.handle);
         item.action = null; item.release = null; item.token = null;
         return terminal;
+    }
+
+    /**
+     * Removes one element, checking the head and then the tail before falling back to a linear
+     * scan: producers usually cancel the item they just submitted, and
+     * {@link ArrayDeque#remove(Object)} always scans from the head. The worst case stays O(n).
+     */
+    private static <T> void removeQueued(ArrayDeque<T> queue, T element) {
+        if (queue.peekFirst() == element) queue.removeFirst();
+        else if (queue.peekLast() == element) queue.removeLast();
+        else queue.remove(element);
     }
 
     private Throwable release(Terminal terminal) {
@@ -281,13 +293,13 @@ public final class BoundedMailbox implements AutoCloseable {
     }
 
     private void cancelIdleWake() {
-        Signal wake;
         synchronized (lock) {
             if (hasWorkLocked() || !extracted.isEmpty()) return;
-            wake = signalPending ? signal : null;
+            // Clearing the flag is enough: the shared Signal instance may already have been
+            // re-armed by a concurrent producer, and removing it by identity would delete that
+            // new wakeup and stall the mailbox permanently. A stale run exits on the flag.
             signalPending = false;
         }
-        if (wake != null) owner.remove(wake);
         if (owner.isOwnerThread()) channel.cancelPending();
     }
 
@@ -370,19 +382,23 @@ public final class BoundedMailbox implements AutoCloseable {
         Throwable payload = releaseAll(terminals);
         cleanup = Failures.combine(cleanup, payload);
         if (owner.isOwnerThread()) {
-            boolean clean;
-            Runnable listener;
-            synchronized (lock) {
-                clean = !ownerCleanupDone; ownerCleanupDone = true;
-                listener = closeListener; closeListener = null;
-            }
-            if (clean) {
-                try { channel.close(); } catch (Throwable failure) { cleanup = Failures.combine(cleanup, failure); }
-                if (registration != null) {
-                    try { scope.release(registration); } catch (Throwable failure) { cleanup = Failures.combine(cleanup, failure); }
+            cleanup = Failures.combine(cleanup, ownerCleanup());
+        } else {
+            // A producer thread can reach failClosed (release, dispatcher rejection, cancel). The
+            // channel and registration must still be released on the owner; the cleanup result is
+            // reported through the captured sink because the field is cleared below.
+            ErrorSink deferredSink = sink;
+            try {
+                boolean accepted = owner.post(() -> {
+                    Throwable deferred = ownerCleanup();
+                    if (deferred != null) failures.reportTo(deferredSink, deferred);
+                });
+                if (!accepted) {
+                    cleanup = Failures.combine(cleanup,
+                            new IllegalStateException("Owner dispatcher rejected deferred mailbox cleanup"));
                 }
-                try { if (listener != null) listener.run(); }
-                catch (Throwable failure) { cleanup = Failures.combine(cleanup, failure); }
+            } catch (Throwable failure) {
+                cleanup = Failures.combine(cleanup, failure);
             }
         }
         failures.clearSink();
@@ -390,6 +406,25 @@ public final class BoundedMailbox implements AutoCloseable {
     }
 
     @Override public void close() { owner.checkOwner(); terminateAll(Outcome.CLOSED, null); }
+
+    /** Owner-thread release of the frame channel, lifecycle registration and close listener. */
+    private Throwable ownerCleanup() {
+        boolean clean;
+        Runnable listener;
+        synchronized (lock) {
+            clean = !ownerCleanupDone; ownerCleanupDone = true;
+            listener = closeListener; closeListener = null;
+        }
+        if (!clean) return null;
+        Throwable cleanup = null;
+        try { channel.close(); } catch (Throwable failure) { cleanup = Failures.combine(cleanup, failure); }
+        if (registration != null) {
+            try { scope.release(registration); } catch (Throwable failure) { cleanup = Failures.combine(cleanup, failure); }
+        }
+        try { if (listener != null) listener.run(); }
+        catch (Throwable failure) { cleanup = Failures.combine(cleanup, failure); }
+        return cleanup;
+    }
 
     public static final class Slot {
         private final Object mailboxIdentity;

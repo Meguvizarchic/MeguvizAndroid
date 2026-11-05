@@ -80,6 +80,18 @@ public class FrameSchedulerContractTest {
         FrameScheduler.FrameChannel good = failureScheduler.openChannel(new Object(), (tick, quota) -> { healthy.incrementAndGet(); return 1; }, 1);
         bad.requestFrame(); good.requestFrame(); failureRuntime.drain();
         assertTrue(bad.isClosed()); assertEquals(1, healthy.get()); assertEquals(1, failureRuntime.errors.size());
+
+        // A throwing close listener must not hide the original drain failure.
+        ControlledRuntime closeRuntime = new ControlledRuntime(); FrameScheduler closeScheduler = closeRuntime.scheduler(2);
+        FrameScheduler.FrameChannel badClose = closeScheduler.openChannel(new Object(),
+                (tick, quota) -> { throw new IllegalStateException("drain failure"); }, 1);
+        badClose.onClose(() -> { throw new IllegalStateException("close failure"); });
+        badClose.requestFrame();
+        closeRuntime.frame();
+        assertEquals(1, closeRuntime.errors.size());
+        assertEquals("drain failure", closeRuntime.errors.get(0).getMessage());
+        assertNotNull(closeRuntime.errors.get(0).getSuppressed());
+        assertEquals("close failure", closeRuntime.errors.get(0).getSuppressed()[0].getMessage());
     }
 
     @Test public void fatalErrorPropagatesAndInjectedBrokenFixtureIsDetected() {
