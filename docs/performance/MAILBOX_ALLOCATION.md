@@ -64,3 +64,25 @@ java -cp <out> FrameBufferBenchmark 8 16 20000 15000 3
 - `states` 仍为 `LinkedHashMap`，每次新键状态 offer 仍分配 Entry；审计曾评估 `ArrayDeque<Slot>`
   加 `queued` 标记的方案（有界循环约 -42%，但替换密集场景略亏），未实施。
 - host 数据不构成 ART/真机结论；真机帧 pacing 与 GC 影响需独立设备验证。
+
+## 2026-11-05（第二轮）：states 队列与 Signal 复用（host 验证）
+
+第二轮继续收窄邮箱的每帧分配，仍只改 `BoundedMailbox.java` 的私有成员。
+
+| 改动 | 位置 | 说明 |
+| --- | --- | --- |
+| `states` → `ArrayDeque<Slot> stateQueue` | `BoundedMailbox.java` | `Slot` 增加包私有 `queued` 标记；替换已排队项接管原位置（O(1)），新项 `addLast`；drain 用 `pollFirst()` + `latest.get(slot)`，不再为每项分配迭代器与 Entry |
+| `Signal` 单实例复用 | 同上 | 新增 `signalPending` 标志；`requestSignalLocked` 检查/置位并复用单例 `signal`；`post`/`Signal.run` 以标志判断 obsolete；`cancelIdleWake`/`setPaused`/`terminateAll` 同步维护 |
+
+顺序语义保持：替换不移动队列位置、drain 后重发追加尾部、pause 重排队追加尾部、cancel/stale/close 按 slot 移除。`terminateAll` 先按 `stateQueue` 的 drain 序收集，再并上 `commands`/`extracted`，然后整队列 `clear()`，并对每项以 `removeStatePosition=false` 终止以避免 O(n²)；释放回调因此仍按确定的 drain 序，而不是 `IdentityHashMap` 迭代序。
+
+ABBA 交错（JDK 21，8 邮箱 × 16 slot × 20000 帧，`FrameBufferBenchmark 8 16 20000 5000 3`）：
+
+| 轮次 | allocated_bytes_per_frame |
+| --- | --- |
+| 改前 | 5028 / 4968 / 4968 |
+| 改后 | 3880 / 3880 / 3880 |
+
+稳态 4968 → 3880 B/帧，约 **-21.9%**；`executed_ops` 两侧均为 480000。`:android-runtime:testDebugUnitTest`（70 项）与 `:android-window:testDebugUnitTest` 通过；`javap -public` 全量对比 before/after 逐字节相同，`api/android-runtime.txt` 不变。
+
+残余：`signalPending` 保证不漏唤醒、不多请求平台帧，但不保证 owner 队列里只有一份 `Signal`——门控 dispatcher 在「拿到 dispatch 后、`release()`/`owner.post` 前被抢占」的窗口下可能重复入队，多余的那份因标志早退（不会多请求帧，也不漏项）；`stateQueue.remove` 对「取消已排队状态项」为 O(n)（`capacity ≤ 256` 时在噪声内，1024 + 逆序密集取消约 2.5×，且 `WorkHandle.cancel()` 可从后台线程调用、持锁期间拖住 owner）；`extracted.remove` 对乱序 cancel 为 O(quota)。host 数据不构成 ART/真机结论。

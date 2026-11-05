@@ -59,7 +59,7 @@ if (!work.accepted()) handle.release();
 | 每 key latest | 同一 `Slot` 多次 `offerState`：旧项 `SUPERSEDED` 并立即释放，仅最后准入的值被应用一次 |
 | command FIFO | `offerCommand`/`offerBatch` 按准入顺序执行；单生产者的相对顺序严格保持，批内按序 |
 | 背压 | 新 key/命令超过 `stateCapacity`/`commandCapacity` 返回 `REJECTED_CAPACITY`；已存在 key 的替换永远允许（`REPLACED`） |
-| 唤醒合并 | 任意数量跨线程提交只维持一个未决唤醒 |
+| 唤醒合并 | 任意数量跨线程提交只维持一个未决唤醒（`signalPending`）；极端抢占窗口下 owner 队列可能短暂出现同一 `Signal` 的两份，多余的一份因标志早退——不会多请求平台帧，也不漏项 |
 | 释放 | 每个终止项的 release 恰好一次；简写使用共享 no-op，调用方无清理负担，但终止/释放路径与完整形式完全一致 |
 | 异常 | action 抛出 → 该项 `FAILED`、邮箱关闭、其余已准入项全部释放且不执行；错误经 `ErrorSink` 上报 |
 | 关闭 | owner 线程 `close()` 释放全部待决跨线程工作且不执行其 action |
