@@ -270,6 +270,9 @@ public final class BoundedMailbox implements AutoCloseable {
         else queue.remove(element);
     }
 
+    /** Test-only seam invoked between the idle decision and the wake cancellation. */
+    Runnable idleWakeProbe;
+
     private Throwable release(Terminal terminal) {
         if (terminal == null) return null;
         try { terminal.callback.run(); return null; }
@@ -300,7 +303,15 @@ public final class BoundedMailbox implements AutoCloseable {
             // new wakeup and stall the mailbox permanently. A stale run exits on the flag.
             signalPending = false;
         }
-        if (owner.isOwnerThread()) channel.cancelPending();
+        // Test seam: runs after the idle decision and before any further action, so a test can
+        // deterministically interleave a producer re-arming the shared wakeup here.
+        Runnable probe = idleWakeProbe;
+        if (probe != null) probe.run();
+        // Re-check: a producer that re-armed the wakeup (or an inline dispatcher that already ran
+        // it) may have requested a frame; cancelling here would drop that fresh request.
+        boolean idle;
+        synchronized (lock) { idle = !signalPending && !hasWorkLocked() && extracted.isEmpty(); }
+        if (idle && owner.isOwnerThread()) channel.cancelPending();
     }
 
     public void setPaused(boolean value) {

@@ -17,28 +17,75 @@ public final class InsetsSnapshot {
             WindowInsetsCompat.Type.displayCutout(), WindowInsetsCompat.Type.systemOverlays()};
     public final int runtimeApi, hostTargetSdk;
     public final String source = "androidx-dispatch";
-    private final List<TypeInsets> values;
-    private InsetsSnapshot(int runtimeApi, int hostTargetSdk, List<TypeInsets> values) {
+
+    /**
+     * Edge values packed per type: two longs per type (left|top, right|bottom), so building a
+     * snapshot allocates one array instead of 9 {@link TypeInsets} + 9 {@link InsetsValue}.
+     */
+    private final long[] packed;
+    /** Bit i is set when TYPES[i] is visible. */
+    private final int visibleMask;
+    /** Materialized on first {@link #types()} call; the element order matches TYPES. */
+    private volatile List<TypeInsets> materialized;
+
+    private InsetsSnapshot(int runtimeApi, int hostTargetSdk, long[] packed, int visibleMask) {
         this.runtimeApi = runtimeApi; this.hostTargetSdk = hostTargetSdk;
-        this.values = Collections.unmodifiableList(values);
+        this.packed = packed; this.visibleMask = visibleMask;
     }
+
     public static InsetsSnapshot copy(WindowInsetsCompat insets, int runtimeApi, int hostTargetSdk) {
-        List<TypeInsets> values = new ArrayList<>();
-        for (int type : TYPES) {
+        long[] packed = new long[TYPES.length * 2];
+        int visibleMask = 0;
+        for (int index = 0; index < TYPES.length; index++) {
+            int type = TYPES[index];
             Insets edge = insets.getInsets(type);
-            InsetsValue edges = edge.left == 0 && edge.top == 0 && edge.right == 0 && edge.bottom == 0
-                    ? InsetsValue.ZERO : new InsetsValue(edge.left, edge.top, edge.right, edge.bottom);
-            values.add(new TypeInsets(type, edges, insets.isVisible(type)));
+            packed[index * 2] = pack(edge.left, edge.top);
+            packed[index * 2 + 1] = pack(edge.right, edge.bottom);
+            if (insets.isVisible(type)) visibleMask |= 1 << index;
         }
-        return new InsetsSnapshot(runtimeApi, hostTargetSdk, values);
+        return new InsetsSnapshot(runtimeApi, hostTargetSdk, packed, visibleMask);
     }
-    public List<TypeInsets> types() { return values; }
+
+    /** The nine type entries in a fixed order; materialized once and cached. */
+    public List<TypeInsets> types() {
+        List<TypeInsets> result = materialized;
+        if (result != null) return result;
+        List<TypeInsets> values = new ArrayList<>(TYPES.length);
+        for (int index = 0; index < TYPES.length; index++) {
+            values.add(new TypeInsets(TYPES[index], edgesAt(index), (visibleMask & (1 << index)) != 0));
+        }
+        result = Collections.unmodifiableList(values);
+        materialized = result;
+        return result;
+    }
+
     public InsetsValue combined(int typeMask) {
         if (typeMask == 0 || (typeMask & ~SUPPORTED_TYPES) != 0) throw new IllegalArgumentException("Unsupported inset types");
         InsetsValue combined = InsetsValue.ZERO;
-        for (TypeInsets value : values) if ((value.type & typeMask) != 0) combined = combined.max(value.edges);
+        for (int index = 0; index < TYPES.length; index++) {
+            if ((TYPES[index] & typeMask) == 0) continue;
+            combined = combined.max(edgesAt(index));
+        }
         return combined;
     }
+
+    private InsetsValue edgesAt(int index) {
+        int left = unpackHigh(packed[index * 2]);
+        int top = unpackLow(packed[index * 2]);
+        int right = unpackHigh(packed[index * 2 + 1]);
+        int bottom = unpackLow(packed[index * 2 + 1]);
+        if (left == 0 && top == 0 && right == 0 && bottom == 0) return InsetsValue.ZERO;
+        return new InsetsValue(left, top, right, bottom);
+    }
+
+    private static long pack(int high, int low) {
+        return ((long) high << 32) | (low & 0xFFFFFFFFL);
+    }
+
+    private static int unpackHigh(long value) { return (int) (value >> 32); }
+
+    private static int unpackLow(long value) { return (int) value; }
+
     public static final class TypeInsets {
         public final int type;
         public final InsetsValue edges;

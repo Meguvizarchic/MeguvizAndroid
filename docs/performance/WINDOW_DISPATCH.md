@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | 观察者 COW + 无观察者早退 | `InsetsSlot.java` | `dispatchSnapshot` 在既有 guard 后对空快照早退；用 `volatile List<Observer> observerSnapshot`（`List.copyOf(observers)`）替代每次 `new ArrayList<>(observers)` 的防御拷贝 |
 | `InsetsSnapshot.copy` 零值复用 | `InsetsSnapshot.java` | 四边全零的 `InsetsValue` 直接返回 `InsetsValue.ZERO` |
+| 扁平化存储 | `InsetsSnapshot.java` | 边值打包进 `long[]`（每类型 2 个 long），可见性进 `int` 位掩码；`types()` 首次调用时物化并缓存（`volatile`），`combined()` 直接读数组不物化 |
 | 注册泄漏加固 | `InsetsSlot` / `ObserverRegistration` / `WindowCallbackLease` | 统一为「先 `scope.own`，再做可失败副作用，失败回滚」，避免并发 `requestClose()` 打穿 `checkOpen` 后残留 listener/callback/表项 |
 
 ## 不变量
@@ -17,6 +18,7 @@
 - `WindowCallbackLease` 仅在 `window.getCallback() == installed` 时还原，避免误还原后继 owner。
 - `observers` 只在 owner 线程修改，`volatile` 仅为防御。
 - 写侧权衡：`observe`/`close` 现在每次变更都 `List.copyOf`；观察者数量为个位数时可忽略，若宿主按帧 observe/unobserve 且分发稀少，则每次变更由 O(1) 变 O(n)。热路径（`dispatchSnapshot`）已零分配。
+- 扁平化权衡（host 实测，androidx 桩按真实字节码行为）：`copy + combined`（每帧分发实际路径）704 B → 304 B（**-57%**）；`copy` only 608 → 297（-51%）；`combined` only 96 → 32（-67%）；但 `copy + types()` 608 → 751（**+24%**），因为 `types()` 需要物化 9 个 `TypeInsets`/`InsetsValue`。热路径（`LocalLayout` 用 `combined`）净赚，遍历 `types()` 的消费者略亏。200 组随机输入的 `types()` 顺序、`combined` max 语义、非法 mask 抛错均逐字节一致。
 
 ## 验证
 

@@ -213,6 +213,14 @@ public class WindowPlatformTest {
         Insets platformUnion = insets.getInsets(WindowInsetsCompat.Type.systemBars());
         assertEquals(new InsetsValue(platformUnion.left, platformUnion.top, platformUnion.right, platformUnion.bottom),
                 snapshot.combined(WindowInsetsCompat.Type.systemBars()));
+        // types() is materialized lazily on first use and then cached: same instance, same order.
+        assertSame(snapshot.types(), snapshot.types());
+        // combined() must not depend on whether types() was materialized.
+        InsetsSnapshot fresh = InsetsSnapshot.copy(insets, android.os.Build.VERSION.SDK_INT, 37);
+        assertEquals(snapshot.combined(WindowInsetsCompat.Type.systemBars()),
+                fresh.combined(WindowInsetsCompat.Type.systemBars()));
+        assertEquals(snapshot.types().get(8).edges, fresh.types().get(8).edges);
+        assertEquals(snapshot.types().get(8).visible, fresh.types().get(8).visible);
     }
     @Test public void acceptedBackgroundCloseRejectsCallbacksBeforeOwnerCleanupWithoutThrowing() throws InterruptedException {
         View view = new View(activity); root.addView(view); ViewScope scope = session.scope(view);

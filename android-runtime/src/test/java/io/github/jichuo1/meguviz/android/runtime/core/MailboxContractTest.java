@@ -65,6 +65,34 @@ public class MailboxContractTest {
         assertFalse(runtime.hasFrame());
     }
 
+    /**
+     * Deterministic regression for the shared-Signal stall. The seam runs after the owner's idle
+     * decision and before the wake cancellation, which is exactly the window where a producer can
+     * re-arm the same Signal instance. Removing that instance by identity would delete the fresh
+     * wakeup and leave the mailbox permanently unable to request a frame.
+     */
+    @Test public void idleWakeCancellationKeepsAConcurrentProducerWakeup() {
+        BoundedMailbox box = mailbox(1, 4, 4); Slot slot = box.newSlot();
+        WorkHandle first = box.offerCommand(token, () -> fail("cancelled"), () -> { }).handle();
+        // The producer re-arms the shared wakeup inside the race window. It must run on a
+        // producer thread so the wakeup is queued (not delivered inline on the owner).
+        box.idleWakeProbe = () -> ControlledRuntime.background(
+                () -> box.offerCommand(token, () -> commits.add(7), () -> { }));
+        assertEquals(Cancellation.CANCELLED, first.cancel());
+        box.idleWakeProbe = null;
+
+        // The producer's fresh wakeup must still be queued: deleting the shared Signal by identity
+        // would leave signalPending set with no runnable, and every later offer would be ignored.
+        assertEquals("the re-armed wakeup must survive the idle-wake cancellation",
+                1, runtime.queuedSignals());
+
+        // The re-armed wakeup must still be able to request a frame and deliver the new command.
+        runtime.drain();
+        assertEquals(Arrays.asList(7), commits);
+        assertFalse(box.isClosed());
+        assertEquals(0, box.pendingCommandCount());
+    }
+
     @Test public void cancellationReleasesCapacityAndPreventsLateCallback() {
         BoundedMailbox box = mailbox(1, 1, 1);
         WorkHandle first = box.offerCommand(token, () -> fail("cancelled"), releases::incrementAndGet).handle();
