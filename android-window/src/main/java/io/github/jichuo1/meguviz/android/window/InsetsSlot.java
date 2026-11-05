@@ -45,7 +45,8 @@ public final class InsetsSlot implements AutoCloseable {
             OWNERS.put(view, new WeakReference<>(this));
             ViewCompat.requestApplyInsets(view);
         } catch (Throwable failure) {
-            registration.close();
+            try { registration.close(); }
+            catch (Throwable cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
             throw failure;
         }
     }

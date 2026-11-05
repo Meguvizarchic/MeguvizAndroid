@@ -20,7 +20,8 @@ public final class WindowCallbackLease implements AutoCloseable {
         });
         try { session.own(registration); }
         catch (Throwable failure) {
-            if (window.getCallback() == installed) window.setCallback(previous);
+            try { if (window.getCallback() == installed) window.setCallback(previous); }
+            catch (Throwable cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
             throw failure;
         }
         return new WindowCallbackLease(registration);

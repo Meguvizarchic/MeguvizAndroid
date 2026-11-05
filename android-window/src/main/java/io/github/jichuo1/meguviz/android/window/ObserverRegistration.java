@@ -33,7 +33,8 @@ public final class ObserverRegistration {
             view.addOnAttachStateChangeListener(attach);
             if (view.isAttachedToWindow()) lease.attach(view.getViewTreeObserver());
         } catch (Throwable failure) {
-            result.close();
+            try { result.close(); }
+            catch (Throwable cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
             throw failure;
         }
         return result;
