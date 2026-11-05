@@ -3,8 +3,6 @@ package io.github.jichuo1.meguviz.android.runtime.core;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -25,13 +23,16 @@ public final class BoundedMailbox implements AutoCloseable {
     private final Failures failures;
     private final int stateCapacity;
     private final int commandCapacity;
-    private final LinkedHashMap<Slot, Item> states = new LinkedHashMap<>();
+    /** Drain order of state slots; a slot appears at most once, marked by Slot.queued. */
+    private final ArrayDeque<Slot> stateQueue = new ArrayDeque<>();
     private final IdentityHashMap<Slot, Item> latest = new IdentityHashMap<>();
     private final ArrayDeque<Item> commands = new ArrayDeque<>();
     private final ArrayDeque<Item> extracted = new ArrayDeque<>();
     private final FrameScheduler.FrameChannel channel;
     private final Registration registration;
     private Signal signal;
+    /** True while a wakeup is posted (or about to be) and not yet consumed by a drain. */
+    private boolean signalPending;
     private boolean paused;
     private boolean closed;
     private boolean ownerCleanupDone;
@@ -98,7 +99,12 @@ public final class BoundedMailbox implements AutoCloseable {
             if (previous != null) replaced = terminateLocked(previous, Outcome.SUPERSEDED, null, false);
             Item item = new Item(slot, token, callback, release, ++sequence);
             if (slot == null) { commands.addLast(item); pendingCommands++; }
-            else { states.put(slot, item); latest.put(slot, item); }
+            else {
+                // A replacement inherits the queued slot position, so drain order never moves;
+                // only a first offer (or one after the previous item left the queue) appends.
+                if (previous == null || !previous.slot.queued) { stateQueue.addLast(slot); slot.queued = true; }
+                latest.put(slot, item);
+            }
             if (paused && slot == null) replaced = terminateLocked(item, Outcome.INACTIVE, null, true);
             dispatch = requestSignalLocked();
             result = new Submission(previous == null ? Admission.ACCEPTED : Admission.REPLACED, item.handle);
@@ -109,10 +115,12 @@ public final class BoundedMailbox implements AutoCloseable {
         return result;
     }
 
-    private boolean hasWorkLocked() { return !states.isEmpty() || !commands.isEmpty(); }
+    private boolean hasWorkLocked() { return !stateQueue.isEmpty() || !commands.isEmpty(); }
     private Signal requestSignalLocked() {
-        if (signal != null || paused || closed || !hasWorkLocked()) return null;
-        signal = new Signal(); return signal;
+        if (signalPending || paused || closed || !hasWorkLocked()) return null;
+        signalPending = true;
+        if (signal == null) signal = new Signal();
+        return signal;
     }
     private void post(Signal pending) {
         if (pending == null) return;
@@ -122,14 +130,14 @@ public final class BoundedMailbox implements AutoCloseable {
         catch (Throwable failure) { failClosed(failure); return; }
         if (!accepted) { failClosed(new IllegalStateException("Owner dispatcher rejected mailbox wakeup")); return; }
         boolean obsolete;
-        synchronized (lock) { obsolete = signal != pending || paused || closed; }
+        synchronized (lock) { obsolete = !signalPending || paused || closed; }
         if (obsolete) owner.remove(pending);
     }
 
     private final class Signal implements Runnable {
         @Override public void run() {
             owner.checkOwner();
-            synchronized (lock) { if (closed || paused || signal != this) return; }
+            synchronized (lock) { if (closed || paused || !signalPending) return; }
             try { channel.requestFrame(); }
             catch (Throwable failure) { failClosed(failure); }
         }
@@ -154,10 +162,11 @@ public final class BoundedMailbox implements AutoCloseable {
                 if (closed || paused) return 0;
                 while (batch.size() < quota && hasWorkLocked()) {
                     Item item;
-                    if (!commands.isEmpty() && (commandTurn || states.isEmpty())) item = commands.removeFirst();
+                    if (!commands.isEmpty() && (commandTurn || stateQueue.isEmpty())) item = commands.removeFirst();
                     else {
-                        Iterator<Item> iterator = states.values().iterator();
-                        item = iterator.next(); iterator.remove();
+                        Slot slot = stateQueue.pollFirst();
+                        slot.queued = false;
+                        item = latest.get(slot);
                     }
                     commandTurn = !commandTurn;
                     extracted.add(item); batch.add(item);
@@ -171,7 +180,7 @@ public final class BoundedMailbox implements AutoCloseable {
                 boolean again;
                 synchronized (lock) {
                     again = !closed && !paused && hasWorkLocked();
-                    if (!again) signal = null;
+                    if (!again) signalPending = false;
                 }
                 if (again) {
                     try { channel.requestFrame(); }
@@ -197,7 +206,7 @@ public final class BoundedMailbox implements AutoCloseable {
             else if (!item.token.isCurrent()) terminal = terminateLocked(item, Outcome.STALE, null, true);
             else if (paused && item.slot != null) {
                 extracted.remove(item);
-                if (latest.get(item.slot) == item) states.put(item.slot, item);
+                if (latest.get(item.slot) == item) { stateQueue.addLast(item.slot); item.slot.queued = true; }
                 return;
             }
             else if (paused || !scope.isActive()) terminal = terminateLocked(item, Outcome.INACTIVE, null, true);
@@ -229,7 +238,10 @@ public final class BoundedMailbox implements AutoCloseable {
             extracted.remove(item);
             if (item.slot == null) { commands.remove(item); pendingCommands--; }
             else {
-                if (removeStatePosition && states.get(item.slot) == item) states.remove(item.slot);
+                if (removeStatePosition && item.slot.queued && latest.get(item.slot) == item) {
+                    stateQueue.remove(item.slot);
+                    item.slot.queued = false;
+                }
                 if (latest.get(item.slot) == item) latest.remove(item.slot);
             }
         }
@@ -263,33 +275,35 @@ public final class BoundedMailbox implements AutoCloseable {
     }
 
     private void cancelIdleWake() {
-        Signal old;
+        Signal wake;
         synchronized (lock) {
             if (hasWorkLocked() || !extracted.isEmpty()) return;
-            old = signal; signal = null;
+            wake = signalPending ? signal : null;
+            signalPending = false;
         }
-        if (old != null) owner.remove(old);
+        if (wake != null) owner.remove(wake);
         if (owner.isOwnerThread()) channel.cancelPending();
     }
 
     public void setPaused(boolean value) {
         owner.checkOwner();
-        Signal old;
+        Signal wake = null;
         Signal dispatch = null;
         List<Terminal> cancelled = new ArrayList<>();
         synchronized (lock) {
             if (closed) return;
             if (paused == value) return;
-            paused = value; old = signal;
+            paused = value;
             if (paused) {
-                signal = null;
+                wake = signalPending ? signal : null;
+                signalPending = false;
                 for (Item item : new ArrayList<>(commands)) cancelled.add(terminateLocked(item, Outcome.INACTIVE, null, true));
                 for (Item item : new ArrayList<>(extracted)) {
                     if (item.slot == null) cancelled.add(terminateLocked(item, Outcome.INACTIVE, null, true));
                 }
             } else dispatch = requestSignalLocked();
         }
-        if (paused) { if (old != null) owner.remove(old); channel.cancelPending(); }
+        if (paused) { if (wake != null) owner.remove(wake); channel.cancelPending(); }
         Throwable failure = releaseAll(cancelled);
         if (failure != null) failClosed(failure);
         post(dispatch);
@@ -327,18 +341,26 @@ public final class BoundedMailbox implements AutoCloseable {
 
     private void terminateAll(Outcome outcome, Throwable reason) {
         ErrorSink sink = failures.sink();
-        Signal old;
+        Signal wake;
         List<Terminal> terminals = new ArrayList<>();
         synchronized (lock) {
-            old = signal; signal = null;
+            wake = signalPending ? signal : null; signalPending = false;
             closed = true;
-            LinkedHashSet<Item> all = new LinkedHashSet<>(states.values());
+            // Preserve the deterministic drain order for the release callbacks instead of the
+            // IdentityHashMap iteration order of latest.values().
+            LinkedHashSet<Item> all = new LinkedHashSet<>();
+            for (Slot slot : stateQueue) {
+                Item queued = latest.get(slot);
+                if (queued != null) all.add(queued);
+            }
             all.addAll(commands); all.addAll(extracted);
-            for (Item item : all) terminals.add(terminateLocked(item, outcome, reason, true));
-            states.clear(); latest.clear(); commands.clear(); extracted.clear(); pendingCommands = 0;
+            // The whole queue is cleared below, so per-item queue removal would only add O(n^2).
+            for (Item item : all) terminals.add(terminateLocked(item, outcome, reason, false));
+            for (Slot slot : stateQueue) slot.queued = false;
+            stateQueue.clear(); latest.clear(); commands.clear(); extracted.clear(); pendingCommands = 0;
         }
         Throwable cleanup = null;
-        try { if (old != null) owner.remove(old); } catch (Throwable failure) { cleanup = failure; }
+        try { if (wake != null) owner.remove(wake); } catch (Throwable failure) { cleanup = failure; }
         Throwable payload = releaseAll(terminals);
         cleanup = Failures.combine(cleanup, payload);
         if (owner.isOwnerThread()) {
@@ -365,6 +387,8 @@ public final class BoundedMailbox implements AutoCloseable {
 
     public static final class Slot {
         private final Object mailboxIdentity;
+        /** True while this slot occupies a position in the state drain queue; drain order marker. */
+        boolean queued;
         private Slot(Object identity) { mailboxIdentity = identity; }
     }
     public static final class Submission {
