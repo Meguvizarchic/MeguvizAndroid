@@ -25,11 +25,17 @@ public final class ObserverRegistration {
             @Override public void onViewAttachedToWindow(View attached) { lease.attach(attached.getViewTreeObserver()); }
             @Override public void onViewDetachedFromWindow(View detached) { lease.detach(); }
         };
-        view.addOnAttachStateChangeListener(attach);
-        if (view.isAttachedToWindow()) lease.attach(view.getViewTreeObserver());
         Registration result = new Registration(scope.dispatcher(), () -> {
             try { lease.close(); } finally { view.removeOnAttachStateChangeListener(attach); }
         });
-        return scope.own(result);
+        scope.own(result);
+        try {
+            view.addOnAttachStateChangeListener(attach);
+            if (view.isAttachedToWindow()) lease.attach(view.getViewTreeObserver());
+        } catch (Throwable failure) {
+            result.close();
+            throw failure;
+        }
+        return result;
     }
 }

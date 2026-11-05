@@ -141,6 +141,15 @@ public class MailboxContractTest {
         runtime.rejectPost = false;
     }
 
+    @Test public void closedScopeConstructorReleasesOpenedChannel() {
+        LifecycleScope closed = runtime.activeScope();
+        closed.close();
+        assertThrows(IllegalStateException.class,
+                () -> new BoundedMailbox(closed, scheduler, runtime.errors::add, 1, 1, 1));
+        assertEquals(0, scheduler.channelCount());
+        assertTrue(runtime.errors.isEmpty());
+    }
+
     @Test public void frameBoundaryReentryAndPublicationKeepWakeup() {
         BoundedMailbox box = mailbox(1, 4, 4);
         box.offerCommand(token, () -> {

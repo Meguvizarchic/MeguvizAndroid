@@ -54,8 +54,14 @@ public final class BoundedMailbox implements AutoCloseable {
         if (stateCapacity <= 0 || commandCapacity <= 0) throw new IllegalArgumentException("Positive capacities required");
         this.stateCapacity = stateCapacity; this.commandCapacity = commandCapacity;
         channel = scheduler.openChannel(identity, this::drain, perFrameQuota);
+        Registration owned = null;
+        try { owned = scope.own(new Registration(owner, this::close)); }
+        catch (Throwable failure) {
+            try { channel.close(); } catch (Throwable cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+        registration = owned;
         channel.onClose(() -> { if (!isClosed()) failClosed(new IllegalStateException("Frame channel closed")); });
-        registration = scope.own(new Registration(owner, this::close));
     }
 
     public Slot newSlot() { owner.checkOwner(); synchronized (lock) { if (closed) throw new IllegalStateException("Mailbox closed"); } return new Slot(identity); }

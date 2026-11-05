@@ -26,7 +26,9 @@ public final class InsetsSnapshot {
         List<TypeInsets> values = new ArrayList<>();
         for (int type : TYPES) {
             Insets edge = insets.getInsets(type);
-            values.add(new TypeInsets(type, new InsetsValue(edge.left, edge.top, edge.right, edge.bottom), insets.isVisible(type)));
+            InsetsValue edges = edge.left == 0 && edge.top == 0 && edge.right == 0 && edge.bottom == 0
+                    ? InsetsValue.ZERO : new InsetsValue(edge.left, edge.top, edge.right, edge.bottom);
+            values.add(new TypeInsets(type, edges, insets.isVisible(type)));
         }
         return new InsetsSnapshot(runtimeApi, hostTargetSdk, values);
     }

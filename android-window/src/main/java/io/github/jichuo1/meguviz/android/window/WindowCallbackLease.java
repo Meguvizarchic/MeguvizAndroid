@@ -18,7 +18,11 @@ public final class WindowCallbackLease implements AutoCloseable {
         Registration registration = new Registration(session.dispatcher(), () -> {
             if (window.getCallback() == installed) window.setCallback(previous);
         });
-        session.own(registration);
+        try { session.own(registration); }
+        catch (Throwable failure) {
+            if (window.getCallback() == installed) window.setCallback(previous);
+            throw failure;
+        }
         return new WindowCallbackLease(registration);
     }
     @Override public void close() { registration.close(); }

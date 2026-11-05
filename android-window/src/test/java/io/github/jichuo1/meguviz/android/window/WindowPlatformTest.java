@@ -115,6 +115,17 @@ public class WindowPlatformTest {
         assertFalse(input.isConsumed()); ViewCompat.dispatchApplyWindowInsets(root, input);
         assertEquals(1, firstCalls.get()); assertEquals(1, siblingCalls.get());
     }
+    @Test public void closedScopeClaimFailsAndSameViewIsClaimableAgain() {
+        View view = new View(activity); root.addView(view);
+        ViewScope closed = session.scope(view);
+        closed.close();
+        assertThrows(IllegalStateException.class, () -> InsetsSlot.claimExclusive(closed));
+        ViewScope reopened = session.scope(view);
+        InsetsSlot slot = InsetsSlot.claimExclusive(reopened);
+        assertNotNull(slot);
+        slot.close(); reopened.close();
+    }
+
     @Test public void observePermissionAndFailuresCloseOnlyAffectedScope() {
         WindowSession observed = WindowSession.open(owner, scheduler, activity.getWindow(), activity, "observe", WindowSession.Permission.OBSERVE, errors::add);
         try {

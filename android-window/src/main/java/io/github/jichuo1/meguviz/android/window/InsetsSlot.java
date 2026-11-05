@@ -20,6 +20,8 @@ public final class InsetsSlot implements AutoCloseable {
     private final ViewScope scope;
     private final Registration registration;
     private final List<Observer> observers = new ArrayList<>();
+    /** Immutable dispatch snapshot; replaced wholesale whenever observers changes. */
+    private volatile List<Observer> observerSnapshot = List.of();
     private View view;
     private boolean paddingOwned, marginsOwned;
     private Registration animation;
@@ -34,18 +36,25 @@ public final class InsetsSlot implements AutoCloseable {
     private InsetsSlot(ViewScope scope, View view) {
         this.scope = scope; this.view = view;
         registration = new Registration(scope.dispatcher(), this::releaseOwned);
-        ViewCompat.setOnApplyWindowInsetsListener(view, (target, insets) -> {
-            dispatchSnapshot(target, insets);
-            return insets; // Observe and local application never consume siblings' input.
-        });
-        OWNERS.put(view, new WeakReference<>(this)); scope.own(registration);
-        ViewCompat.requestApplyInsets(view);
+        scope.own(registration);
+        try {
+            ViewCompat.setOnApplyWindowInsetsListener(view, (target, insets) -> {
+                dispatchSnapshot(target, insets);
+                return insets; // Observe and local application never consume siblings' input.
+            });
+            OWNERS.put(view, new WeakReference<>(this));
+            ViewCompat.requestApplyInsets(view);
+        } catch (Throwable failure) {
+            registration.close();
+            throw failure;
+        }
     }
     private void dispatchSnapshot(View target, WindowInsetsCompat insets) {
         if (view == null || scope.lifecycle().admissionClosed() || !scope.parentAdmissionOpen()) return;
+        if (observerSnapshot.isEmpty()) return;
         InsetsSnapshot snapshot = InsetsSnapshot.copy(insets, Build.VERSION.SDK_INT,
                 target.getContext().getApplicationInfo().targetSdkVersion);
-        for (Observer observer : new ArrayList<>(observers)) {
+        for (Observer observer : observerSnapshot) {
             if (view == null || scope.lifecycle().admissionClosed()) break;
             if (observer.callback != null) {
                 try { observer.callback.accept(snapshot); }
@@ -71,7 +80,8 @@ public final class InsetsSlot implements AutoCloseable {
     }
     public Registration observe(Consumer<InsetsSnapshot> callback) {
         requireOpen(); Observer entry = new Observer(Objects.requireNonNull(callback)); observers.add(entry);
-        return new Registration(scope.dispatcher(), () -> { entry.callback = null; observers.remove(entry); });
+        observerSnapshot = List.copyOf(observers);
+        return new Registration(scope.dispatcher(), () -> { entry.callback = null; observers.remove(entry); observerSnapshot = List.copyOf(observers); });
     }
     public LocalLayout applyPaddingToOwnedContainer(int typeMask) { return applyLayout(typeMask, false); }
     public LocalLayout applyMarginsToOwnedContainer(int typeMask) { return applyLayout(typeMask, true); }
@@ -102,6 +112,7 @@ public final class InsetsSlot implements AutoCloseable {
             view = null;
             for (Observer observer : observers) observer.callback = null;
             observers.clear();
+            observerSnapshot = List.copyOf(observers);
             WeakReference<InsetsSlot> current = OWNERS.get(target);
             if (current != null && current.get() == this) {
                 OWNERS.remove(target); ViewCompat.setOnApplyWindowInsetsListener(target, null);
@@ -122,6 +133,7 @@ public final class InsetsSlot implements AutoCloseable {
             this.margins = margins; baseline = new InsetsBaseline(read());
             observer = new Observer(snapshot -> write(baseline.apply(read(), toRelative(snapshot.combined(mask)))));
             observer.layout = this; observers.add(observer);
+            observerSnapshot = List.copyOf(observers);
         }
         /** Current padding/margin is the new baseline, not a delta from the last insets. */
         public void rebaseBaseline() { requireOpen(); if (closed) throw new IllegalStateException("Layout lease closed"); baseline.rebase(read()); }
@@ -148,6 +160,7 @@ public final class InsetsSlot implements AutoCloseable {
         @Override public void close() {
             scope.dispatcher().checkOwner(); if (closed) return; closed = true;
             observer.callback = null; observer.layout = null; observers.remove(observer);
+            observerSnapshot = List.copyOf(observers);
             try { if (view != null) { InsetsValue current = read(); InsetsValue restore = baseline.restoreIfOwned(current); if (!current.equals(restore)) write(restore); } }
             finally { if (margins) marginsOwned = false; else paddingOwned = false; }
         }
