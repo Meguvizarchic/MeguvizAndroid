@@ -2,6 +2,7 @@ package io.github.jichuo1.meguviz.android.runtime.core;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -25,9 +26,9 @@ public final class BoundedMailbox implements AutoCloseable {
     private final int stateCapacity;
     private final int commandCapacity;
     private final LinkedHashMap<Slot, Item> states = new LinkedHashMap<>();
-    private final LinkedHashMap<Slot, Item> latest = new LinkedHashMap<>();
+    private final IdentityHashMap<Slot, Item> latest = new IdentityHashMap<>();
     private final ArrayDeque<Item> commands = new ArrayDeque<>();
-    private final LinkedHashSet<Item> extracted = new LinkedHashSet<>();
+    private final ArrayDeque<Item> extracted = new ArrayDeque<>();
     private final FrameScheduler.FrameChannel channel;
     private final Registration registration;
     private Signal signal;
@@ -278,6 +279,7 @@ public final class BoundedMailbox implements AutoCloseable {
         List<Terminal> cancelled = new ArrayList<>();
         synchronized (lock) {
             if (closed) return;
+            if (paused == value) return;
             paused = value; old = signal;
             if (paused) {
                 signal = null;
