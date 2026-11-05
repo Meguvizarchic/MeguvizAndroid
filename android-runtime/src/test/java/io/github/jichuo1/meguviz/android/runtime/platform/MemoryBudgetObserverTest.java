@@ -5,7 +5,7 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class MemoryBudgetObserverTest {
-    @Test public void fullVersionIsRequired() {
+    @Test public void fullVersionIsRequiredAndSnapshotKeepsValuesIndependent() {
         assertFalse(MemoryBudgetObserver.versionSupported(27, Integer.MAX_VALUE));
         assertFalse(MemoryBudgetObserver.versionSupported(36, 3_700_002));
         assertFalse(MemoryBudgetObserver.versionSupported(37, 3_700_000));
@@ -13,9 +13,7 @@ public class MemoryBudgetObserverTest {
         assertFalse(MemoryBudgetObserver.versionSupported(38, -1));
         assertTrue(MemoryBudgetObserver.versionSupported(37, 3_700_002));
         assertTrue(MemoryBudgetObserver.versionSupported(38, 3_800_000));
-    }
 
-    @Test public void snapshotKeepsProcessAndPackageValuesIndependent() {
         MemoryBudgetObserver.Snapshot value = new MemoryBudgetObserver.Snapshot(10, 20, 30, 40);
         assertEquals(10, value.processBudgetBytes);
         assertEquals(20, value.processUsageBytes);

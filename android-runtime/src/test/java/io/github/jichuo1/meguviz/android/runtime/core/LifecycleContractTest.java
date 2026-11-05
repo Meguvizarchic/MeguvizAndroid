@@ -6,7 +6,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.*;
 
 public class LifecycleContractTest {
-    @Test public void detachIsRecoverableAndInvalidatesAttachLease() {
+    @Test public void detachRebindAndExternalDomainsInvalidateOnlyTheirOwners() {
         ControlledRuntime runtime = new ControlledRuntime();
         LifecycleScope scope = runtime.activeScope();
         WorkToken old = scope.lease(LifecycleScope.ALL).token();
@@ -18,29 +18,25 @@ public class LifecycleContractTest {
         scope.close();
         assertEquals(LifecycleScope.State.CLOSED, scope.state());
         assertThrows(IllegalStateException.class, () -> scope.setAttached(true));
-    }
 
-    @Test public void rebindInvalidatesOnlyRelevantDomain() {
-        ControlledRuntime runtime = new ControlledRuntime(); LifecycleScope scope = runtime.activeScope();
-        WorkToken binding = scope.lease(LifecycleScope.BINDING).token();
-        WorkToken attach = scope.lease(LifecycleScope.ATTACH).token();
-        scope.rebind();
+        ControlledRuntime rebindRuntime = new ControlledRuntime(); LifecycleScope rebindScope = rebindRuntime.activeScope();
+        WorkToken binding = rebindScope.lease(LifecycleScope.BINDING).token();
+        WorkToken attach = rebindScope.lease(LifecycleScope.ATTACH).token();
+        rebindScope.rebind();
         assertFalse(binding.isCurrent()); assertTrue(attach.isCurrent());
         AtomicInteger commits = new AtomicInteger();
-        assertEquals(LifecycleScope.CommitResult.STALE, scope.commit(binding, commits::incrementAndGet));
+        assertEquals(LifecycleScope.CommitResult.STALE, rebindScope.commit(binding, commits::incrementAndGet));
         assertEquals(0, commits.get());
-    }
 
-    @Test public void externalResourceDomainsAreIndependent() {
-        ControlledRuntime runtime = new ControlledRuntime(); LifecycleScope scope = runtime.activeScope();
-        EpochDomain theme = new EpochDomain(runtime); EpochDomain resources = new EpochDomain(runtime);
-        WorkToken themed = scope.lease(0, theme).token();
-        WorkToken resourceOnly = scope.lease(0, resources).token();
+        ControlledRuntime domainRuntime = new ControlledRuntime(); LifecycleScope domainScope = domainRuntime.activeScope();
+        EpochDomain theme = new EpochDomain(domainRuntime); EpochDomain resources = new EpochDomain(domainRuntime);
+        WorkToken themed = domainScope.lease(0, theme).token();
+        WorkToken resourceOnly = domainScope.lease(0, resources).token();
         theme.invalidate();
         assertFalse(themed.isCurrent()); assertTrue(resourceOnly.isCurrent());
     }
 
-    @Test public void closeAdmissionAndCompletionAreSeparate() {
+    @Test public void closeAdmissionCompletionAndRejectionAreObservable() {
         ControlledRuntime runtime = new ControlledRuntime(); LifecycleScope scope = runtime.activeScope();
         WorkToken token = scope.lease(LifecycleScope.ALL).token();
         AtomicReference<LifecycleScope.CloseRequest> result = new AtomicReference<>();
@@ -52,18 +48,16 @@ public class LifecycleContractTest {
         assertEquals(1, runtime.queuedSignals());
         runtime.pumpSignals();
         assertTrue(result.get().completed()); assertTrue(scope.isClosed());
+
+        ControlledRuntime rejectedRuntime = new ControlledRuntime(); LifecycleScope rejectedScope = rejectedRuntime.activeScope();
+        rejectedRuntime.rejectPost = true;
+        AtomicReference<LifecycleScope.CloseRequest> rejected = new AtomicReference<>();
+        ControlledRuntime.background(() -> rejected.set(rejectedScope.requestClose()));
+        assertTrue(rejected.get().accepted()); assertFalse(rejected.get().completed()); assertNotNull(rejected.get().failure());
+        rejectedScope.close(); assertTrue(rejected.get().completed());
     }
 
-    @Test public void rejectedCloseRequiresOwnerCompletion() {
-        ControlledRuntime runtime = new ControlledRuntime(); LifecycleScope scope = runtime.activeScope();
-        runtime.rejectPost = true;
-        AtomicReference<LifecycleScope.CloseRequest> result = new AtomicReference<>();
-        ControlledRuntime.background(() -> result.set(scope.requestClose()));
-        assertTrue(result.get().accepted()); assertFalse(result.get().completed()); assertNotNull(result.get().failure());
-        scope.close(); assertTrue(result.get().completed());
-    }
-
-    @Test public void closeReleasesEveryRegistrationEvenWhenSinkThrows() {
+    @Test public void closeReleasesEveryRegistrationAndDoesNotAffectOtherScopes() {
         ControlledRuntime runtime = new ControlledRuntime();
         LifecycleScope scope = new LifecycleScope(runtime, error -> { throw new IllegalArgumentException("sink"); });
         AtomicInteger releases = new AtomicInteger();
@@ -73,63 +67,55 @@ public class LifecycleContractTest {
         assertEquals(2, releases.get()); assertEquals(0, scope.registrationCount());
         assertEquals("cleanup", scope.lastFailure().getMessage());
         assertEquals("sink", scope.lastFailure().getSuppressed()[0].getMessage());
-    }
 
-    @Test public void closingOneScopeDoesNotCloseAnother() {
-        ControlledRuntime runtime = new ControlledRuntime();
-        LifecycleScope left = runtime.activeScope(); LifecycleScope right = runtime.activeScope();
+        ControlledRuntime twoRuntime = new ControlledRuntime();
+        LifecycleScope left = twoRuntime.activeScope(); LifecycleScope right = twoRuntime.activeScope();
         WorkToken token = right.lease(LifecycleScope.ALL).token(); left.close();
         assertTrue(right.isActive()); assertTrue(token.isCurrent());
     }
 
-    @Test public void alreadyEnteredCallbackCannotBePreemptedButNextCommitIsStale() {
+    @Test public void commitRevalidatesOnOwnerThreadAndCallbackCloseIsFinal() {
         ControlledRuntime runtime = new ControlledRuntime(); LifecycleScope scope = runtime.activeScope();
         WorkToken token = scope.lease(LifecycleScope.ALL).token(); AtomicInteger count = new AtomicInteger();
         assertEquals(LifecycleScope.CommitResult.COMPLETED, scope.commit(token, () -> { scope.close(); count.incrementAndGet(); }));
         assertEquals(LifecycleScope.CommitResult.STALE, scope.commit(token, count::incrementAndGet));
         assertEquals(1, count.get());
+
+        ControlledRuntime ownerRuntime = new ControlledRuntime(); LifecycleScope ownerScope = ownerRuntime.activeScope();
+        WorkToken ownerToken = ownerScope.lease(0).token();
+        ControlledRuntime.background(() -> assertThrows(IllegalStateException.class, ownerToken::isCurrent));
+        ownerScope.setStarted(false);
+        assertEquals(LifecycleScope.CommitResult.INACTIVE, ownerScope.commit(ownerToken, () -> fail("inactive commit")));
     }
 
-    @Test public void explicitLeaseCloseInvalidatesTokens() {
+    @Test public void leaseCloseAndEpochOverflowInvalidateStamps() {
         ControlledRuntime runtime = new ControlledRuntime(); BindingLease lease = runtime.activeScope().lease(0);
         lease.close(); lease.close(); assertFalse(lease.token().isCurrent());
-    }
 
-    @Test public void epochOverflowChangesIdentityAndCannotReviveOldStamp() {
-        ControlledRuntime runtime = new ControlledRuntime(); EpochDomain domain = new EpochDomain(runtime, Long.MAX_VALUE);
+        ControlledRuntime epochRuntime = new ControlledRuntime(); EpochDomain domain = new EpochDomain(epochRuntime, Long.MAX_VALUE);
         EpochDomain.Stamp old = domain.stamp(); domain.invalidate();
         assertEquals(0, domain.stamp().epoch()); assertFalse(domain.matches(old));
         domain.close(); assertFalse(domain.matches(old));
     }
 
-    @Test public void commitMustRevalidateOnOwnerThread() {
-        ControlledRuntime runtime = new ControlledRuntime(); LifecycleScope scope = runtime.activeScope();
-        WorkToken token = scope.lease(0).token();
-        ControlledRuntime.background(() -> assertThrows(IllegalStateException.class, token::isCurrent));
-        scope.setStarted(false);
-        assertEquals(LifecycleScope.CommitResult.INACTIVE, scope.commit(token, () -> fail("inactive commit")));
-    }
-
-    @Test public void callbackFailureClosesScopeAndKeepsOtherCleanup() {
+    @Test public void callbackAndCleanupFailuresCloseScopeAfterEveryRelease() {
         ControlledRuntime runtime = new ControlledRuntime(); LifecycleScope scope = runtime.activeScope();
         AtomicInteger released = new AtomicInteger(); scope.own(new Registration(runtime, released::incrementAndGet));
         assertEquals(LifecycleScope.CommitResult.FAILED, scope.commit(scope.lease(0).token(), () -> { throw new IllegalStateException("callback"); }));
         assertTrue(scope.isClosed()); assertEquals(1, released.get()); assertEquals(1, runtime.errors.size());
-    }
 
-    @Test public void cleanupFatalAfterManyOrdinaryFailuresStillPropagatesAfterAllReleases() {
-        ControlledRuntime runtime = new ControlledRuntime(); LifecycleScope scope = runtime.activeScope();
+        ControlledRuntime fatalRuntime = new ControlledRuntime(); LifecycleScope fatalScope = fatalRuntime.activeScope();
         AtomicInteger releases = new AtomicInteger();
-        for (int i = 0; i < 12; i++) scope.own(new Registration(runtime, () -> { releases.incrementAndGet(); throw new IllegalStateException("ordinary"); }));
-        scope.own(new Registration(runtime, () -> { releases.incrementAndGet(); throw new OutOfMemoryError("injected fatal"); }));
-        scope.own(new Registration(runtime, releases::incrementAndGet));
-        assertThrows(OutOfMemoryError.class, scope::close);
-        assertEquals(14, releases.get()); assertEquals(0, scope.registrationCount());
-        assertTrue(scope.requestClose().completed());
-        assertTrue(scope.lastFailure().getSuppressed().length <= 8);
+        for (int i = 0; i < 12; i++) fatalScope.own(new Registration(fatalRuntime, () -> { releases.incrementAndGet(); throw new IllegalStateException("ordinary"); }));
+        fatalScope.own(new Registration(fatalRuntime, () -> { releases.incrementAndGet(); throw new OutOfMemoryError("injected fatal"); }));
+        fatalScope.own(new Registration(fatalRuntime, releases::incrementAndGet));
+        assertThrows(OutOfMemoryError.class, fatalScope::close);
+        assertEquals(14, releases.get()); assertEquals(0, fatalScope.registrationCount());
+        assertTrue(fatalScope.requestClose().completed());
+        assertTrue(fatalScope.lastFailure().getSuppressed().length <= 8);
     }
 
-    @Test public void closingRegistrationsUnlinksOwnerWithoutWaitingForScopeClose() {
+    @Test public void registrationCloseUnlinksOwnerEvenWhenCleanupFails() throws Exception {
         ControlledRuntime runtime = new ControlledRuntime(); LifecycleScope scope = runtime.activeScope();
         AtomicInteger count = new AtomicInteger();
         for (int i = 0; i < 1000; i++) {
@@ -138,13 +124,11 @@ public class LifecycleContractTest {
             assertEquals(0, scope.registrationCount());
         }
         assertEquals(1000, count.get());
-    }
 
-    @Test public void registrationCleanupFailureStillUnlinksAndCannotAcquireTwoOwners() throws Exception {
-        ControlledRuntime runtime = new ControlledRuntime(); LifecycleScope scope = runtime.activeScope();
-        Registration registration = scope.own(new Registration(runtime, () -> { throw new IllegalStateException("cleanup"); }));
-        assertThrows(IllegalStateException.class, () -> scope.own(registration));
-        assertThrows(IllegalStateException.class, registration::close); assertEquals(0, scope.registrationCount());
+        ControlledRuntime failingRuntime = new ControlledRuntime(); LifecycleScope failingScope = failingRuntime.activeScope();
+        Registration registration = failingScope.own(new Registration(failingRuntime, () -> { throw new IllegalStateException("cleanup"); }));
+        assertThrows(IllegalStateException.class, () -> failingScope.own(registration));
+        assertThrows(IllegalStateException.class, registration::close); assertEquals(0, failingScope.registrationCount());
         java.lang.reflect.Field field = Registration.class.getDeclaredField("ownerRelease"); field.setAccessible(true);
         assertNull(field.get(registration));
     }

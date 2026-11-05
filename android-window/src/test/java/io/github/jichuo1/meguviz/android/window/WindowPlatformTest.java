@@ -43,7 +43,7 @@ public class WindowPlatformTest {
         session.setStarted(true); assertTrue(root.isAttachedToWindow());
     }
     @After public void tearDown() { if (session != null) session.close(); if (scheduler != null) scheduler.close(); if (controller != null) controller.pause().stop().destroy(); }
-    @Test public void rebindDetachAndCloseRejectOldResults() {
+    @Test public void rebindDetachPreDrawAndCloseRejectOldResults() {
         View view = new View(activity); root.addView(view); ViewScope scope = session.scope(view);
         BindingLease first = scope.binding(ResourceState.ALL); AtomicInteger commits = new AtomicInteger();
         assertEquals(LifecycleScope.CommitResult.COMPLETED, scope.commit(first, commits::incrementAndGet));
@@ -54,25 +54,23 @@ public class WindowPlatformTest {
         root.addView(view); assertEquals(LifecycleScope.State.ACTIVE, scope.lifecycle().state());
         BindingLease current = scope.binding(0); scope.close();
         assertEquals(LifecycleScope.CommitResult.STALE, scope.commit(current, commits::incrementAndGet)); assertEquals(1, commits.get());
-    }
-    @Test public void preDrawRegistrationTracksDetachAndReattachAndReleases() {
-        View view = new View(activity); root.addView(view); ViewScope scope = session.scope(view);
-        AtomicInteger calls = new AtomicInteger(); Registration lease = ObserverRegistration.onPreDraw(scope, calls::incrementAndGet);
+
+        View preDrawView = new View(activity); root.addView(preDrawView); ViewScope preDrawScope = session.scope(preDrawView);
+        AtomicInteger calls = new AtomicInteger(); Registration lease = ObserverRegistration.onPreDraw(preDrawScope, calls::incrementAndGet);
         root.getViewTreeObserver().dispatchOnPreDraw(); assertEquals(1, calls.get());
-        root.removeView(view); root.getViewTreeObserver().dispatchOnPreDraw(); assertEquals(1, calls.get());
-        root.addView(view); root.getViewTreeObserver().dispatchOnPreDraw(); assertEquals(2, calls.get());
-        lease.close(); scope.close(); root.getViewTreeObserver().dispatchOnPreDraw(); assertEquals(2, calls.get());
-        assertEquals(0, scope.lifecycle().registrationCount());
+        root.removeView(preDrawView); root.getViewTreeObserver().dispatchOnPreDraw(); assertEquals(1, calls.get());
+        root.addView(preDrawView); root.getViewTreeObserver().dispatchOnPreDraw(); assertEquals(2, calls.get());
+        lease.close(); preDrawScope.close(); root.getViewTreeObserver().dispatchOnPreDraw(); assertEquals(2, calls.get());
+        assertEquals(0, preDrawScope.lifecycle().registrationCount());
     }
-    @Test public void callbackLeaseDoesNotOverwriteLaterInstaller() {
+    @Test public void callbackLeaseAndSharedSchedulerSurviveSessionClose() {
         Window window = activity.getWindow(); Window.Callback original = window.getCallback();
         WindowCallbackLease lease = WindowCallbackLease.install(session, WindowPlatformTest::wrapper);
         Window.Callback installed = window.getCallback(); assertNotSame(original, installed);
         Window.Callback later = wrapper(installed); window.setCallback(later); lease.close(); assertSame(later, window.getCallback());
         window.setCallback(original);
         WindowCallbackLease own = WindowCallbackLease.install(session, WindowPlatformTest::wrapper); own.close(); assertSame(original, window.getCallback());
-    }
-    @Test public void sharedSchedulerSurvivesSessionCloseAndPauseHasNoEmptyFrames() {
+
         AtomicInteger calls = new AtomicInteger();
         WindowSession.WindowFrameChannel channel = session.openFrameChannel(new Object(), (tick, quota) -> { calls.incrementAndGet(); return 1; }, 1);
         session.setStarted(false); channel.requestFrame(); assertNull(driver.pending);
@@ -80,7 +78,7 @@ public class WindowPlatformTest {
         FrameScheduler.FrameChannel unrelated = scheduler.openChannel(new Object(), (tick, quota) -> { calls.incrementAndGet(); return 1; }, 1);
         unrelated.requestFrame(); session.close(); driver.fire(); assertEquals(2, calls.get());
     }
-    @Test public void insetsApplicationDoesNotAccumulateOrConsumeAndHandsOff() {
+    @Test public void insetsApplicationAndLocalObserverDoNotConsumeOrAccumulate() {
         View view = new View(activity); root.addView(view); view.setPaddingRelative(1, 2, 3, 4);
         ViewScope scope = session.scope(view); InsetsSlot slot = InsetsSlot.claimExclusive(scope);
         assertThrows(IllegalStateException.class, () -> InsetsSlot.claimExclusive(scope));
@@ -104,12 +102,12 @@ public class WindowPlatformTest {
         slot.handOffToExternalOwner(); assertEquals(20, view.getPaddingTop());
         AtomicInteger external = new AtomicInteger(); ViewCompat.setOnApplyWindowInsetsListener(view, (target, value) -> { external.incrementAndGet(); return value; });
         scope.close(); ViewCompat.dispatchApplyWindowInsets(view, insets); assertEquals(1, external.get());
-    }
-    @Test public void localInsetsObserverDoesNotConsumeLaterSiblingDispatch() {
+        root.removeView(view);
+
         View first = new View(activity); View sibling = new View(activity); root.addView(first); root.addView(sibling);
-        InsetsSlot slot = InsetsSlot.claimExclusive(session.scope(first));
+        InsetsSlot siblingSlot = InsetsSlot.claimExclusive(session.scope(first));
         AtomicInteger firstCalls = new AtomicInteger(); AtomicInteger siblingCalls = new AtomicInteger();
-        slot.observe(snapshot -> firstCalls.incrementAndGet());
+        siblingSlot.observe(snapshot -> firstCalls.incrementAndGet());
         ViewCompat.setOnApplyWindowInsetsListener(sibling, (target, value) -> { assertFalse(value.isConsumed()); siblingCalls.incrementAndGet(); return value; });
         WindowInsetsCompat input = new WindowInsetsCompat.Builder(attachedRootInsets())
                 .setInsets(WindowInsetsCompat.Type.systemBars(), Insets.of(2, 3, 4, 5)).build();
@@ -117,7 +115,7 @@ public class WindowPlatformTest {
         assertFalse(input.isConsumed()); ViewCompat.dispatchApplyWindowInsets(root, input);
         assertEquals(1, firstCalls.get()); assertEquals(1, siblingCalls.get());
     }
-    @Test public void observePermissionCannotChangeWindowOrLayout() {
+    @Test public void observePermissionAndFailuresCloseOnlyAffectedScope() {
         WindowSession observed = WindowSession.open(owner, scheduler, activity.getWindow(), activity, "observe", WindowSession.Permission.OBSERVE, errors::add);
         try {
             View view = new View(activity); root.addView(view); InsetsSlot slot = InsetsSlot.claimExclusive(observed.scope(view));
@@ -125,8 +123,23 @@ public class WindowPlatformTest {
             assertThrows(SecurityException.class, () -> WindowCallbackLease.install(observed, WindowPlatformTest::wrapper));
             assertThrows(IllegalStateException.class, () -> WindowSession.open(owner, scheduler, activity.getWindow(), activity, "duplicate", WindowSession.Permission.OWN_WINDOW, errors::add));
         } finally { observed.close(); }
+
+        View callbackView = new View(activity); root.addView(callbackView); ViewScope callbackScope = session.scope(callbackView);
+        AtomicInteger released = new AtomicInteger(); callbackScope.own(new Registration(owner, released::incrementAndGet));
+        ObserverRegistration.onPreDraw(callbackScope, () -> { throw new IllegalStateException("callback failure"); });
+        root.getViewTreeObserver().dispatchOnPreDraw();
+        assertTrue(callbackScope.lifecycle().isClosed()); assertFalse(session.lifecycle().isClosed());
+        assertEquals(1, released.get()); assertEquals(1, errors.size()); assertEquals(0, callbackScope.lifecycle().registrationCount());
+        root.getViewTreeObserver().dispatchOnPreDraw(); assertEquals(1, errors.size());
+
+        errors.clear();
+        View cleanupView = new View(activity); root.addView(cleanupView); ViewScope cleanupScope = session.scope(cleanupView);
+        AtomicInteger cleanupReleased = new AtomicInteger();
+        cleanupScope.ownBinding(() -> { throw new IllegalStateException("cleanup failure"); });
+        cleanupScope.ownBinding((AutoCloseable) cleanupReleased::incrementAndGet);
+        cleanupScope.rebind(); assertEquals(1, cleanupReleased.get()); assertTrue(cleanupScope.lifecycle().isClosed()); assertEquals(1, errors.size());
     }
-    @Test public void viewMailboxRetainsLatestStateWhileStoppedAndRebindReleasesPayload() {
+    @Test public void viewMailboxAndRepeatedLeaseCloseDoNotAccumulate() {
         View view = new View(activity); root.addView(view); ViewScope scope = session.scope(view);
         BoundedMailbox mailbox = scope.openMailbox(1, 1, 1); BoundedMailbox.Slot slot = mailbox.newSlot();
         BindingLease binding = scope.binding(0); AtomicInteger commits = new AtomicInteger(); AtomicInteger releases = new AtomicInteger();
@@ -136,24 +149,19 @@ public class WindowPlatformTest {
         session.setStarted(true); driver.fire(); assertEquals(1, commits.get()); assertEquals(1, releases.get());
         mailbox.offerState(slot, binding.token(), commits::incrementAndGet, releases::incrementAndGet);
         scope.rebind(); assertTrue(mailbox.isClosed()); assertEquals(2, releases.get()); assertNull(driver.pending);
+
+        View leaseView = new View(activity); root.addView(leaseView); ViewScope leaseScope = session.scope(leaseView);
+        int registrations = leaseScope.lifecycle().registrationCount();
+        for (int i = 0; i < 1000; i++) {
+            leaseScope.binding(ResourceState.ALL).close();
+            leaseScope.openMailbox(1, 1, 1).close();
+        }
+        assertEquals(0, leaseScope.ownedBindingCount());
+        assertEquals(registrations, leaseScope.lifecycle().registrationCount());
+        assertEquals(0, scheduler.channelCount()); assertNull(driver.pending);
+        leaseScope.close(); assertEquals(0, leaseScope.lifecycle().registrationCount());
     }
-    @Test public void callbackFailureClosesAffectedScopeAndReleasesOtherRegistrations() {
-        View view = new View(activity); root.addView(view); ViewScope scope = session.scope(view);
-        AtomicInteger released = new AtomicInteger(); scope.own(new Registration(owner, released::incrementAndGet));
-        ObserverRegistration.onPreDraw(scope, () -> { throw new IllegalStateException("callback failure"); });
-        root.getViewTreeObserver().dispatchOnPreDraw();
-        assertTrue(scope.lifecycle().isClosed()); assertFalse(session.lifecycle().isClosed());
-        assertEquals(1, released.get()); assertEquals(1, errors.size()); assertEquals(0, scope.lifecycle().registrationCount());
-        root.getViewTreeObserver().dispatchOnPreDraw(); assertEquals(1, errors.size());
-    }
-    @Test public void rebindCleanupFailureClosesScopeAfterTryingEveryBinding() {
-        View view = new View(activity); root.addView(view); ViewScope scope = session.scope(view);
-        AtomicInteger released = new AtomicInteger();
-        scope.ownBinding(() -> { throw new IllegalStateException("cleanup failure"); });
-        scope.ownBinding((AutoCloseable) released::incrementAndGet);
-        scope.rebind(); assertEquals(1, released.get()); assertTrue(scope.lifecycle().isClosed()); assertEquals(1, errors.size());
-    }
-    @Test public void localThemeAndNamespaceHaveIndependentResourceAuthority() {
+    @Test public void localThemeNamespaceAndWindowOwnerResourceAuthority() {
         android.view.ContextThemeWrapper local = new android.view.ContextThemeWrapper(activity, android.R.style.Theme_Material_Light);
         View moduleView = new View(local); View hostView = new View(activity); root.addView(moduleView); root.addView(hostView);
         ViewScope module = session.scope(moduleView, "module"); ViewScope host = session.scope(hostView);
@@ -166,6 +174,22 @@ public class WindowPlatformTest {
         assertEquals(LifecycleScope.CommitResult.COMPLETED, host.commit(hostBinding, () -> {}));
         session.refreshConfiguration();
         module.close(); assertEquals(LifecycleScope.CommitResult.COMPLETED, host.commit(hostBinding, () -> {}));
+
+        android.view.ContextThemeWrapper ownerLocal = new android.view.ContextThemeWrapper(activity, android.R.style.Theme_Material_Light);
+        View ownerView = new View(ownerLocal); root.addView(ownerView);
+        assertThrows(IllegalArgumentException.class, () -> session.resourcesFor(ownerView));
+        ViewScope bound = session.scope(ownerView, "local");
+        assertSame(bound.resources(), session.resourcesFor(ownerView));
+        assertNotSame(session.resources(), session.resourcesFor(ownerView));
+        BindingLease previous = bound.binding(ResourceState.THEME);
+        ResourceState.Token windowToken = session.resources().state().token(ResourceState.THEME);
+        Object theme = ownerLocal.getTheme(); ownerLocal.getTheme().applyStyle(android.R.style.Theme_Material, true);
+        assertSame(theme, ownerLocal.getTheme()); session.resourcesFor(ownerView).invalidateTheme();
+        assertEquals(LifecycleScope.CommitResult.STALE, bound.commit(previous, () -> fail("stale local resource")));
+        assertTrue(session.resources().state().isCurrent(windowToken));
+        assertThrows(IllegalStateException.class, () -> session.scope(ownerView));
+        bound.close(); assertThrows(IllegalArgumentException.class, () -> session.resourcesFor(ownerView));
+        session.close(); assertThrows(IllegalStateException.class, () -> session.resourcesFor(ownerView));
     }
     @Test public void snapshotAcceptsCurrentSystemBarsUnionIncludingSystemOverlays() {
         WindowInsetsCompat insets = new WindowInsetsCompat.Builder()
@@ -179,23 +203,6 @@ public class WindowPlatformTest {
         assertEquals(new InsetsValue(platformUnion.left, platformUnion.top, platformUnion.right, platformUnion.bottom),
                 snapshot.combined(WindowInsetsCompat.Type.systemBars()));
     }
-    @Test public void windowOwnerCanInvalidateExistingLocalDomainWithoutDuplicatingScope() {
-        android.view.ContextThemeWrapper local = new android.view.ContextThemeWrapper(activity, android.R.style.Theme_Material_Light);
-        View view = new View(local); root.addView(view);
-        assertThrows(IllegalArgumentException.class, () -> session.resourcesFor(view));
-        ViewScope bound = session.scope(view, "local");
-        assertSame(bound.resources(), session.resourcesFor(view));
-        assertNotSame(session.resources(), session.resourcesFor(view));
-        BindingLease previous = bound.binding(ResourceState.THEME);
-        ResourceState.Token windowToken = session.resources().state().token(ResourceState.THEME);
-        Object theme = local.getTheme(); local.getTheme().applyStyle(android.R.style.Theme_Material, true);
-        assertSame(theme, local.getTheme()); session.resourcesFor(view).invalidateTheme();
-        assertEquals(LifecycleScope.CommitResult.STALE, bound.commit(previous, () -> fail("stale local resource")));
-        assertTrue(session.resources().state().isCurrent(windowToken));
-        assertThrows(IllegalStateException.class, () -> session.scope(view));
-        bound.close(); assertThrows(IllegalArgumentException.class, () -> session.resourcesFor(view));
-        session.close(); assertThrows(IllegalStateException.class, () -> session.resourcesFor(view));
-    }
     @Test public void acceptedBackgroundCloseRejectsCallbacksBeforeOwnerCleanupWithoutThrowing() throws InterruptedException {
         View view = new View(activity); root.addView(view); ViewScope scope = session.scope(view);
         AtomicInteger callbacks = new AtomicInteger(); ObserverRegistration.onPreDraw(scope, callbacks::incrementAndGet);
@@ -208,18 +215,6 @@ public class WindowPlatformTest {
         assertEquals(0, callbacks.get());
         assertFalse(owner.tasks.isEmpty()); owner.tasks.removeFirst().run(); assertTrue(close.get().completed());
         assertEquals(0, scope.lifecycle().registrationCount());
-    }
-    @Test public void repeatedLeaseAndMailboxCloseDoesNotAccumulateOwnedEntries() {
-        View view = new View(activity); root.addView(view); ViewScope scope = session.scope(view);
-        int registrations = scope.lifecycle().registrationCount();
-        for (int i = 0; i < 1000; i++) {
-            scope.binding(ResourceState.ALL).close();
-            scope.openMailbox(1, 1, 1).close();
-        }
-        assertEquals(0, scope.ownedBindingCount());
-        assertEquals(registrations, scope.lifecycle().registrationCount());
-        assertEquals(0, scheduler.channelCount()); assertNull(driver.pending);
-        scope.close(); assertEquals(0, scope.lifecycle().registrationCount());
     }
     private static Window.Callback wrapper(Window.Callback delegate) {
         return (Window.Callback) Proxy.newProxyInstance(Window.Callback.class.getClassLoader(), new Class<?>[]{Window.Callback.class},

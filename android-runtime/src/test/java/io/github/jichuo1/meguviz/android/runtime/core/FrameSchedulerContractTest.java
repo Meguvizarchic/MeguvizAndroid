@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.Assert.*;
 
 public class FrameSchedulerContractTest {
-    @Test public void registrationDoesNotScheduleAndRepeatedRequestsCoalesce() {
+    @Test public void registrationCoalescingAndIndependentOwnerCancellation() {
         ControlledRuntime runtime = new ControlledRuntime(); FrameScheduler scheduler = runtime.scheduler(64);
         AtomicInteger callbacks = new AtomicInteger();
         FrameScheduler.FrameChannel channel = scheduler.openChannel(new Object(), (tick, quota) -> { callbacks.incrementAndGet(); return 1; }, 16);
@@ -16,61 +16,55 @@ public class FrameSchedulerContractTest {
         for (int i = 0; i < 10_000; i++) channel.requestFrame();
         assertEquals(1, runtime.frameRequests); runtime.frame();
         assertEquals(1, callbacks.get()); assertFalse(runtime.hasFrame());
-    }
 
-    @Test public void independentOwnerCancellationLeavesOtherFrameRequested() {
-        ControlledRuntime runtime = new ControlledRuntime(); FrameScheduler scheduler = runtime.scheduler(64);
+        ControlledRuntime cancelRuntime = new ControlledRuntime(); FrameScheduler cancelScheduler = cancelRuntime.scheduler(64);
         List<Integer> calls = new ArrayList<>();
-        FrameScheduler.FrameChannel left = scheduler.openChannel(new Object(), (tick, quota) -> { calls.add(1); return 1; }, 16);
-        FrameScheduler.FrameChannel right = scheduler.openChannel(new Object(), (tick, quota) -> { calls.add(2); return 1; }, 16);
+        FrameScheduler.FrameChannel left = cancelScheduler.openChannel(new Object(), (tick, quota) -> { calls.add(1); return 1; }, 16);
+        FrameScheduler.FrameChannel right = cancelScheduler.openChannel(new Object(), (tick, quota) -> { calls.add(2); return 1; }, 16);
         left.requestFrame(); right.requestFrame(); left.close();
-        assertTrue(runtime.hasFrame()); runtime.frame(); assertEquals(Arrays.asList(2), calls);
-        assertFalse(runtime.hasFrame());
+        assertTrue(cancelRuntime.hasFrame()); cancelRuntime.frame(); assertEquals(Arrays.asList(2), calls);
+        assertFalse(cancelRuntime.hasFrame());
     }
 
-    @Test public void cancellationAfterBatchSnapshotPreventsCallback() {
+    @Test public void batchSnapshotCancellationAndReentryCreateOneLaterBatch() {
         ControlledRuntime runtime = new ControlledRuntime(); FrameScheduler scheduler = runtime.scheduler(64);
         FrameScheduler.FrameChannel[] second = new FrameScheduler.FrameChannel[1];
         FrameScheduler.FrameChannel first = scheduler.openChannel(new Object(), (tick, quota) -> { second[0].cancelPending(); return 1; }, 16);
         second[0] = scheduler.openChannel(new Object(), (tick, quota) -> { fail("cancelled selected channel"); return 1; }, 16);
         first.requestFrame(); second[0].requestFrame(); runtime.frame(); assertFalse(runtime.hasFrame());
-    }
 
-    @Test public void reentryCreatesExactlyOneLaterBatch() {
-        ControlledRuntime runtime = new ControlledRuntime(); FrameScheduler scheduler = runtime.scheduler(64);
+        ControlledRuntime reentryRuntime = new ControlledRuntime(); FrameScheduler reentryScheduler = reentryRuntime.scheduler(64);
         List<Long> frames = new ArrayList<>(); FrameScheduler.FrameChannel[] channel = new FrameScheduler.FrameChannel[1];
-        channel[0] = scheduler.openChannel(new Object(), (tick, quota) -> {
+        channel[0] = reentryScheduler.openChannel(new Object(), (tick, quota) -> {
             frames.add(tick.sequence());
             if (frames.size() < 3) { channel[0].requestFrame(); channel[0].requestFrame(); }
             return 1;
         }, 1);
-        channel[0].requestFrame(); runtime.frame(); assertEquals(Arrays.asList(1L), frames);
-        runtime.drain(); assertEquals(Arrays.asList(1L, 2L, 3L), frames); assertEquals(3, runtime.frameRequests);
+        channel[0].requestFrame(); reentryRuntime.frame(); assertEquals(Arrays.asList(1L), frames);
+        reentryRuntime.drain(); assertEquals(Arrays.asList(1L, 2L, 3L), frames); assertEquals(3, reentryRuntime.frameRequests);
     }
 
-    @Test public void sameOwnerCannotInstallASecondDriverChannel() {
+    @Test public void sameOwnerSingleChannelAndGlobalQuotaRotation() {
         ControlledRuntime runtime = new ControlledRuntime(); FrameScheduler scheduler = runtime.scheduler(64); Object owner = new Object();
         FrameScheduler.FrameChannel channel = scheduler.openChannel(owner, (tick, quota) -> 1, 1);
         assertThrows(IllegalStateException.class, () -> scheduler.openChannel(owner, (tick, quota) -> 1, 1));
         channel.close(); scheduler.openChannel(owner, (tick, quota) -> 1, 1);
-    }
 
-    @Test public void globalQuotaAndRotationPreventBusyOwnersStarvingOthers() {
-        ControlledRuntime runtime = new ControlledRuntime(); FrameScheduler scheduler = runtime.scheduler(1);
+        ControlledRuntime quotaRuntime = new ControlledRuntime(); FrameScheduler quotaScheduler = quotaRuntime.scheduler(1);
         int[] counts = new int[3]; FrameScheduler.FrameChannel[] channels = new FrameScheduler.FrameChannel[3];
         for (int i = 0; i < channels.length; i++) {
             final int index = i;
-            channels[i] = scheduler.openChannel(new Object(), (tick, quota) -> {
+            channels[i] = quotaScheduler.openChannel(new Object(), (tick, quota) -> {
                 assertEquals(1, quota); counts[index]++; channels[index].requestFrame(); return 1;
             }, 16);
             channels[i].requestFrame();
         }
-        for (int i = 0; i < 12; i++) runtime.frame();
+        for (int i = 0; i < 12; i++) quotaRuntime.frame();
         assertArrayEquals(new int[] {4, 4, 4}, counts);
-        scheduler.close(); assertFalse(runtime.hasFrame());
+        quotaScheduler.close(); assertFalse(quotaRuntime.hasFrame());
     }
 
-    @Test public void mailboxAlternatesCommandsAndStatesWithinPerOwnerQuota() {
+    @Test public void mailboxAlternationAndCallbackFailureKeepOtherOwners() {
         ControlledRuntime runtime = new ControlledRuntime(); FrameScheduler scheduler = runtime.scheduler(2);
         LifecycleScope scope = runtime.activeScope(); WorkToken token = scope.lease(0).token();
         BoundedMailbox box = new BoundedMailbox(scope, scheduler, runtime.errors::add, 2, 32, 2);
@@ -79,18 +73,16 @@ public class FrameSchedulerContractTest {
         box.offerState(box.newSlot(), token, states::incrementAndGet, () -> {});
         runtime.frame(); assertEquals(1, states.get()); assertEquals(1, commands.get());
         box.close();
-    }
 
-    @Test public void callbackFailureDoesNotLoseOtherPendingOwners() {
-        ControlledRuntime runtime = new ControlledRuntime(); FrameScheduler scheduler = runtime.scheduler(2);
+        ControlledRuntime failureRuntime = new ControlledRuntime(); FrameScheduler failureScheduler = failureRuntime.scheduler(2);
         AtomicInteger healthy = new AtomicInteger();
-        FrameScheduler.FrameChannel bad = scheduler.openChannel(new Object(), (tick, quota) -> { throw new IllegalStateException("bad"); }, 1);
-        FrameScheduler.FrameChannel good = scheduler.openChannel(new Object(), (tick, quota) -> { healthy.incrementAndGet(); return 1; }, 1);
-        bad.requestFrame(); good.requestFrame(); runtime.drain();
-        assertTrue(bad.isClosed()); assertEquals(1, healthy.get()); assertEquals(1, runtime.errors.size());
+        FrameScheduler.FrameChannel bad = failureScheduler.openChannel(new Object(), (tick, quota) -> { throw new IllegalStateException("bad"); }, 1);
+        FrameScheduler.FrameChannel good = failureScheduler.openChannel(new Object(), (tick, quota) -> { healthy.incrementAndGet(); return 1; }, 1);
+        bad.requestFrame(); good.requestFrame(); failureRuntime.drain();
+        assertTrue(bad.isClosed()); assertEquals(1, healthy.get()); assertEquals(1, failureRuntime.errors.size());
     }
 
-    @Test public void fatalErrorPropagatesButUnenteredOwnersRemainScheduled() {
+    @Test public void fatalErrorPropagatesAndInjectedBrokenFixtureIsDetected() {
         ControlledRuntime runtime = new ControlledRuntime(); FrameScheduler scheduler = runtime.scheduler(2);
         AtomicInteger healthy = new AtomicInteger();
         FrameScheduler.FrameChannel bad = scheduler.openChannel(new Object(), (tick, quota) -> { throw new OutOfMemoryError("injected"); }, 1);
@@ -98,13 +90,11 @@ public class FrameSchedulerContractTest {
         bad.requestFrame(); good.requestFrame();
         assertThrows(OutOfMemoryError.class, runtime::frame); assertTrue(runtime.hasFrame());
         runtime.frame(); assertEquals(1, healthy.get()); assertFalse(runtime.hasFrame());
-    }
 
-    @Test public void injectedBrokenFixtureIsDetected() {
-        ControlledRuntime runtime = new ControlledRuntime(); FrameDriver.Callback callback = nanos -> {};
-        runtime.request(callback);
-        assertThrows(AssertionError.class, () -> runtime.request(callback));
-        runtime.remove(callback); assertThrows(AssertionError.class, runtime::frame);
+        ControlledRuntime fixtureRuntime = new ControlledRuntime(); FrameDriver.Callback callback = nanos -> {};
+        fixtureRuntime.request(callback);
+        assertThrows(AssertionError.class, () -> fixtureRuntime.request(callback));
+        fixtureRuntime.remove(callback); assertThrows(AssertionError.class, fixtureRuntime::frame);
     }
 
     @Test public void closedChannelRetainsNeitherSharedSchedulerNorCallbacks() throws Exception {

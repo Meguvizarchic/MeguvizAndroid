@@ -34,7 +34,7 @@ public final class MailboxConvenienceContractTest {
         return new BoundedMailbox(scope, scheduler, runtime.errors::add, states, commands, quota);
     }
 
-    @Test public void shorthandMatchesLegacyAdmissionCoalescingAndFifoOrder() {
+    @Test public void shorthandAdmissionCoalescingCapacityAndFifoMatchLegacy() {
         BoundedMailbox legacy = mailbox(2, 4, 16);
         BoundedMailbox shorthand = mailbox(2, 4, 16);
         Slot legacySlot = legacy.newSlot();
@@ -72,41 +72,40 @@ public final class MailboxConvenienceContractTest {
         assertEquals(0, shorthand.pendingStateCount());
         assertEquals(0, shorthand.pendingCommandCount());
         assertFalse(runtime.hasFrame());
-    }
 
-    @Test public void shorthandRejectsCapacityExactlyLikeLegacy() {
-        BoundedMailbox legacy = mailbox(1, 1, 1);
-        BoundedMailbox shorthand = mailbox(1, 1, 1);
-        Slot legacySlot = legacy.newSlot();
-        Slot shortSlot = shorthand.newSlot();
+        releases.set(0);
+        BoundedMailbox legacyRejects = mailbox(1, 1, 1);
+        BoundedMailbox shorthandRejects = mailbox(1, 1, 1);
+        Slot legacyRejectSlot = legacyRejects.newSlot();
+        Slot shortRejectSlot = shorthandRejects.newSlot();
         List<Admission> legacyAdmissions = new ArrayList<>();
         List<Admission> shortAdmissions = new ArrayList<>();
 
-        legacyAdmissions.add(legacy.offerState(legacySlot, token, () -> {}, releases::incrementAndGet).admission());
-        shortAdmissions.add(shorthand.offerState(shortSlot, token, () -> {}).admission());
-        legacyAdmissions.add(legacy.offerState(legacy.newSlot(), token, () -> {}, releases::incrementAndGet).admission());
-        shortAdmissions.add(shorthand.offerState(shorthand.newSlot(), token, () -> {}).admission());
-        legacyAdmissions.add(legacy.offerState(legacySlot, token, () -> {}, releases::incrementAndGet).admission());
-        shortAdmissions.add(shorthand.offerState(shortSlot, token, () -> {}).admission());
-        legacyAdmissions.add(legacy.offerCommand(token, () -> {}, releases::incrementAndGet).admission());
-        shortAdmissions.add(shorthand.offerCommand(token, () -> {}).admission());
-        legacyAdmissions.add(legacy.offerCommand(token, () -> {}, releases::incrementAndGet).admission());
-        shortAdmissions.add(shorthand.offerCommand(token, () -> {}).admission());
-        legacyAdmissions.add(legacy.offerBatch(token, Arrays.asList(() -> {}, () -> {}), releases::incrementAndGet).admission());
-        shortAdmissions.add(shorthand.offerBatch(token, Arrays.asList(() -> {}, () -> {})).admission());
+        legacyAdmissions.add(legacyRejects.offerState(legacyRejectSlot, token, () -> {}, releases::incrementAndGet).admission());
+        shortAdmissions.add(shorthandRejects.offerState(shortRejectSlot, token, () -> {}).admission());
+        legacyAdmissions.add(legacyRejects.offerState(legacyRejects.newSlot(), token, () -> {}, releases::incrementAndGet).admission());
+        shortAdmissions.add(shorthandRejects.offerState(shorthandRejects.newSlot(), token, () -> {}).admission());
+        legacyAdmissions.add(legacyRejects.offerState(legacyRejectSlot, token, () -> {}, releases::incrementAndGet).admission());
+        shortAdmissions.add(shorthandRejects.offerState(shortRejectSlot, token, () -> {}).admission());
+        legacyAdmissions.add(legacyRejects.offerCommand(token, () -> {}, releases::incrementAndGet).admission());
+        shortAdmissions.add(shorthandRejects.offerCommand(token, () -> {}).admission());
+        legacyAdmissions.add(legacyRejects.offerCommand(token, () -> {}, releases::incrementAndGet).admission());
+        shortAdmissions.add(shorthandRejects.offerCommand(token, () -> {}).admission());
+        legacyAdmissions.add(legacyRejects.offerBatch(token, Arrays.asList(() -> {}, () -> {}), releases::incrementAndGet).admission());
+        shortAdmissions.add(shorthandRejects.offerBatch(token, Arrays.asList(() -> {}, () -> {})).admission());
 
         assertEquals(legacyAdmissions, shortAdmissions);
         assertEquals(Arrays.asList(Admission.ACCEPTED, Admission.REJECTED_CAPACITY, Admission.REPLACED,
                 Admission.ACCEPTED, Admission.REJECTED_CAPACITY, Admission.REJECTED_CAPACITY), shortAdmissions);
         runtime.drain();
-        assertFalse(legacy.isClosed());
-        assertFalse(shorthand.isClosed());
+        assertFalse(legacyRejects.isClosed());
+        assertFalse(shorthandRejects.isClosed());
         assertEquals(3, releases.get()); // legacy only: superseded + state + command
-        assertEquals(0, shorthand.pendingStateCount());
-        assertEquals(0, shorthand.pendingCommandCount());
+        assertEquals(0, shorthandRejects.pendingStateCount());
+        assertEquals(0, shorthandRejects.pendingCommandCount());
     }
 
-    @Test public void shorthandCloseReleasesPendingWithoutRunningActionsOrCallerCleanup() {
+    @Test public void shorthandCloseAndPartialBatchFailureMatchLegacy() {
         BoundedMailbox legacy = mailbox(1, 4, 4);
         BoundedMailbox shorthand = mailbox(1, 4, 4);
         Slot legacySlot = legacy.newSlot();
@@ -131,9 +130,35 @@ public final class MailboxConvenienceContractTest {
         assertEquals(0, shorthand.pendingCommandCount());
         assertEquals(0, scheduler.channelCount());
         assertFalse(runtime.hasFrame());
+
+        releases.set(0); runtime.errors.clear();
+        BoundedMailbox failingLegacy = mailbox(1, 1, 1);
+        BoundedMailbox failingShorthand = mailbox(1, 1, 1);
+        List<Integer> legacyCommits = new ArrayList<>();
+        List<Integer> shortCommits = new ArrayList<>();
+        WorkHandle lh = failingLegacy.offerBatch(token, Arrays.asList(
+                () -> legacyCommits.add(1),
+                () -> { throw new IllegalStateException("partial"); },
+                () -> legacyCommits.add(3)), releases::incrementAndGet).handle();
+        WorkHandle sh = failingShorthand.offerBatch(token, Arrays.asList(
+                () -> shortCommits.add(1),
+                () -> { throw new IllegalStateException("partial"); },
+                () -> shortCommits.add(3))).handle();
+
+        runtime.drain();
+
+        assertEquals(Arrays.asList(1), legacyCommits);
+        assertEquals(legacyCommits, shortCommits);
+        assertEquals(Outcome.FAILED, lh.outcome());
+        assertEquals(lh.outcome(), sh.outcome());
+        assertEquals("partial", sh.failure().getMessage());
+        assertTrue(failingLegacy.isClosed());
+        assertTrue(failingShorthand.isClosed());
+        assertEquals(1, releases.get()); // legacy only
+        assertEquals(2, runtime.errors.size());
     }
 
-    @Test public void shorthandPreservesForeignOwnershipRejection() {
+    @Test public void shorthandForeignOwnershipAndBatchValidationMatchLegacy() {
         BoundedMailbox left = mailbox(1, 1, 1);
         BoundedMailbox right = mailbox(1, 1, 1);
         assertEquals(Admission.UNSUPPORTED, left.offerState(right.newSlot(), token, () -> {}).admission());
@@ -142,6 +167,51 @@ public final class MailboxConvenienceContractTest {
         assertEquals(Admission.UNSUPPORTED, left.offerBatch(foreign, Arrays.asList(() -> {})).admission());
         assertEquals(0, releases.get());
         assertFalse(left.isClosed());
+
+        BoundedMailbox box = mailbox(1, 1, 1);
+        assertThrows(NullPointerException.class, () -> box.offerBatch(token, null));
+        assertThrows(NullPointerException.class, () -> box.offerBatch(token, Arrays.asList(() -> {}, null)));
+        assertThrows(IllegalArgumentException.class, () -> box.offerBatch(token, Collections.emptyList()));
+        assertThrows(NullPointerException.class, () -> box.offerCommand(token, null));
+        assertEquals(Admission.UNSUPPORTED, box.offerState(null, token, () -> {}).admission());
+        assertEquals(0, releases.get());
+        assertFalse(box.isClosed());
+    }
+
+    @Test public void shorthandBatchSnapshotAndStaleTokenMatchLegacy() {
+        BoundedMailbox box = mailbox(1, 1, 1);
+        List<Runnable> callbacks = new ArrayList<>();
+        callbacks.add(() -> commits.add(1));
+        WorkHandle handle = box.offerBatch(token, callbacks).handle();
+        callbacks.clear();
+        callbacks.add(() -> commits.add(99));
+
+        runtime.drain();
+
+        assertEquals(Arrays.asList(1), commits);
+        assertEquals(Outcome.COMPLETED, handle.outcome());
+        assertEquals(0, releases.get());
+
+        releases.set(0);
+        ControlledRuntime staleRuntime = new ControlledRuntime();
+        LifecycleScope staleScope = staleRuntime.activeScope();
+        FrameScheduler staleScheduler = staleRuntime.scheduler(64);
+        WorkToken staleToken = staleScope.lease(LifecycleScope.ALL).token();
+        BoundedMailbox legacy = new BoundedMailbox(staleScope, staleScheduler, staleRuntime.errors::add, 1, 2, 2);
+        BoundedMailbox shorthand = new BoundedMailbox(staleScope, staleScheduler, staleRuntime.errors::add, 1, 2, 2);
+        AtomicBoolean legacyRan = new AtomicBoolean();
+        AtomicBoolean shortRan = new AtomicBoolean();
+        WorkHandle lh = legacy.offerCommand(staleToken, () -> legacyRan.set(true), releases::incrementAndGet).handle();
+        WorkHandle sh = shorthand.offerCommand(staleToken, () -> shortRan.set(true)).handle();
+
+        staleScope.rebind();
+        staleRuntime.drain();
+
+        assertEquals(Outcome.STALE, lh.outcome());
+        assertEquals(lh.outcome(), sh.outcome());
+        assertFalse(legacyRan.get());
+        assertFalse(shortRan.get());
+        assertEquals(1, releases.get()); // legacy only
     }
 
     @Test public void shorthandMultiProducerCoalescesAndKeepsPerProducerFifo() throws Exception {
@@ -199,66 +269,6 @@ public final class MailboxConvenienceContractTest {
         box.close();
     }
 
-    @Test public void shorthandBatchOrderAndPartialFailureMatchLegacy() {
-        BoundedMailbox legacy = mailbox(1, 1, 1);
-        BoundedMailbox shorthand = mailbox(1, 1, 1);
-        List<Integer> legacyCommits = new ArrayList<>();
-        List<Integer> shortCommits = new ArrayList<>();
-        WorkHandle lh = legacy.offerBatch(token, Arrays.asList(
-                () -> legacyCommits.add(1),
-                () -> { throw new IllegalStateException("partial"); },
-                () -> legacyCommits.add(3)), releases::incrementAndGet).handle();
-        WorkHandle sh = shorthand.offerBatch(token, Arrays.asList(
-                () -> shortCommits.add(1),
-                () -> { throw new IllegalStateException("partial"); },
-                () -> shortCommits.add(3))).handle();
-
-        runtime.drain();
-
-        assertEquals(Arrays.asList(1), legacyCommits);
-        assertEquals(legacyCommits, shortCommits);
-        assertEquals(Outcome.FAILED, lh.outcome());
-        assertEquals(lh.outcome(), sh.outcome());
-        assertEquals("partial", sh.failure().getMessage());
-        assertTrue(legacy.isClosed());
-        assertTrue(shorthand.isClosed());
-        assertEquals(1, releases.get()); // legacy only
-        assertEquals(2, runtime.errors.size());
-    }
-
-    @Test public void shorthandBatchSnapshotsCallerList() {
-        BoundedMailbox box = mailbox(1, 1, 1);
-        List<Runnable> callbacks = new ArrayList<>();
-        callbacks.add(() -> commits.add(1));
-        WorkHandle handle = box.offerBatch(token, callbacks).handle();
-        callbacks.clear();
-        callbacks.add(() -> commits.add(99));
-
-        runtime.drain();
-
-        assertEquals(Arrays.asList(1), commits);
-        assertEquals(Outcome.COMPLETED, handle.outcome());
-        assertEquals(0, releases.get());
-    }
-
-    @Test public void shorthandStaleTokenDoesNotRunActionLikeLegacy() {
-        BoundedMailbox legacy = mailbox(1, 2, 2);
-        BoundedMailbox shorthand = mailbox(1, 2, 2);
-        AtomicBoolean legacyRan = new AtomicBoolean();
-        AtomicBoolean shortRan = new AtomicBoolean();
-        WorkHandle lh = legacy.offerCommand(token, () -> legacyRan.set(true), releases::incrementAndGet).handle();
-        WorkHandle sh = shorthand.offerCommand(token, () -> shortRan.set(true)).handle();
-
-        scope.rebind();
-        runtime.drain();
-
-        assertEquals(Outcome.STALE, lh.outcome());
-        assertEquals(lh.outcome(), sh.outcome());
-        assertFalse(legacyRan.get());
-        assertFalse(shortRan.get());
-        assertEquals(1, releases.get()); // legacy only
-    }
-
     @Test public void shorthandSupersededAndCancelledOutcomesMatchLegacy() {
         BoundedMailbox legacy = mailbox(1, 1, 1);
         BoundedMailbox shorthand = mailbox(1, 1, 1);
@@ -282,16 +292,5 @@ public final class MailboxConvenienceContractTest {
         assertEquals(0, legacy.pendingStateCount());
         assertEquals(0, shorthand.pendingStateCount());
         assertFalse(runtime.hasFrame());
-    }
-
-    @Test public void shorthandDelegatesBatchValidation() {
-        BoundedMailbox box = mailbox(1, 1, 1);
-        assertThrows(NullPointerException.class, () -> box.offerBatch(token, null));
-        assertThrows(NullPointerException.class, () -> box.offerBatch(token, Arrays.asList(() -> {}, null)));
-        assertThrows(IllegalArgumentException.class, () -> box.offerBatch(token, Collections.emptyList()));
-        assertThrows(NullPointerException.class, () -> box.offerCommand(token, null));
-        assertEquals(Admission.UNSUPPORTED, box.offerState(null, token, () -> {}).admission());
-        assertEquals(0, releases.get());
-        assertFalse(box.isClosed());
     }
 }

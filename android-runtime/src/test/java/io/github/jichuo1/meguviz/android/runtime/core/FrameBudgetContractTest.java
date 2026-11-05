@@ -24,7 +24,7 @@ public class FrameBudgetContractTest {
         }
     }
 
-    @Test public void legacyCallbackAndDriverRetainUnknownBudget() {
+    @Test public void legacyAndCopiedBudgetValuesWorkAcrossRefreshRatesAndLateFrames() {
         long[] value = {0};
         FrameDriver.Callback legacy = time -> value[0] = time;
         legacy.onFrame(7L, 8L, 9L);
@@ -39,13 +39,11 @@ public class FrameBudgetContractTest {
             return 1;
         }, 1).requestFrame();
         owner.frame(); scheduler.close();
-    }
 
-    @Test public void copiedValuesAndReservationWorkAcrossRefreshRatesAndLateFrames() {
-        ControlledRuntime owner = new ControlledRuntime(); BudgetDriver driver = new BudgetDriver();
-        FrameScheduler scheduler = new FrameScheduler(owner, driver, owner.errors::add, 4);
+        ControlledRuntime copiedOwner = new ControlledRuntime(); BudgetDriver driver = new BudgetDriver();
+        FrameScheduler copiedScheduler = new FrameScheduler(copiedOwner, driver, copiedOwner.errors::add, 4);
         List<FrameTick> captured = new ArrayList<>();
-        FrameScheduler.FrameChannel channel = scheduler.openChannel(new Object(), (tick, quota) -> {
+        FrameScheduler.FrameChannel channel = copiedScheduler.openChannel(new Object(), (tick, quota) -> {
             captured.add(tick); return 1;
         }, 1);
         long time = 1_000_000_000L;
@@ -67,7 +65,7 @@ public class FrameBudgetContractTest {
         }
         assertEquals(Long.valueOf(Long.MAX_VALUE - 1),
                 new FrameTick(1, 0, Long.MAX_VALUE, Long.MAX_VALUE).workBudgetNanos(Long.MIN_VALUE, 1));
-        scheduler.close();
+        copiedScheduler.close();
     }
 
     @Test public void oneDriverKeepsReentryCancellationAndOwnerIsolation() {

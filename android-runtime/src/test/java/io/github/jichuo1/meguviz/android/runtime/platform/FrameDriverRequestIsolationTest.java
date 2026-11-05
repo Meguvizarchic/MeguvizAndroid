@@ -51,7 +51,7 @@ public class FrameDriverRequestIsolationTest {
         Choreographer.VsyncCallback extract() { return queued.remove(0); }
     }
 
-    @Test public void extractedFrameCallbackCannotConsumeReplacement() {
+    @Test public void extractedFrameAndVsyncCallbacksCannotConsumeReplacement() {
         FrameQueue queue = new FrameQueue();
         ChoreographerDriver driver = new ChoreographerDriver(OWNER, queue);
         AtomicInteger oldCalls = new AtomicInteger(), newCalls = new AtomicInteger();
@@ -65,25 +65,23 @@ public class FrameDriverRequestIsolationTest {
         assertTrue(driver.request(next)); assertEquals(2, queue.posts);
         queue.extract().doFrame(20L);
         assertEquals(1, newCalls.get()); assertEquals(0, oldCalls.get());
-    }
 
-    @Test public void extractedVsyncCallbackCannotConsumeReplacement() {
-        VsyncQueue queue = new VsyncQueue();
-        BudgetFrameDriver.VsyncDriver driver = new BudgetFrameDriver.VsyncDriver(OWNER, queue);
-        FrameDriver.Callback old = time -> fail("old callback delivered");
-        FrameDriver.Callback next = time -> fail("replacement delivered by old frame");
+        VsyncQueue vsyncQueue = new VsyncQueue();
+        BudgetFrameDriver.VsyncDriver vsyncDriver = new BudgetFrameDriver.VsyncDriver(OWNER, vsyncQueue);
+        FrameDriver.Callback failingOld = time -> fail("old callback delivered");
+        FrameDriver.Callback failingNext = time -> fail("replacement delivered by old frame");
         FrameDriver.Callback other = time -> { };
-        assertTrue(driver.request(old));
-        Choreographer.VsyncCallback extracted = queue.extract();
-        driver.remove(old);
-        assertTrue(driver.request(next));
+        assertTrue(vsyncDriver.request(failingOld));
+        Choreographer.VsyncCallback extractedVsync = vsyncQueue.extract();
+        vsyncDriver.remove(failingOld);
+        assertTrue(vsyncDriver.request(failingNext));
         // Stale platform payload is never accessed, even if it is no longer valid.
-        extracted.onVsync(null); extracted.onVsync(null);
-        assertTrue(driver.request(next)); assertEquals(2, queue.posts);
-        assertThrows(IllegalStateException.class, () -> driver.request(other));
-        driver.remove(next);
-        assertTrue(driver.request(other)); assertEquals(3, queue.posts);
-        driver.remove(other);
+        extractedVsync.onVsync(null); extractedVsync.onVsync(null);
+        assertTrue(vsyncDriver.request(failingNext)); assertEquals(2, vsyncQueue.posts);
+        assertThrows(IllegalStateException.class, () -> vsyncDriver.request(other));
+        vsyncDriver.remove(failingNext);
+        assertTrue(vsyncDriver.request(other)); assertEquals(3, vsyncQueue.posts);
+        vsyncDriver.remove(other);
     }
 
     @Test public void failedPostInvalidatesBothKindsOfPlatformCallback() {

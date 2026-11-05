@@ -11,7 +11,7 @@ public class WindowModelsTest {
         public void add(Tree tree) { tree.listeners++; adds++; }
         public void remove(Tree tree) { if (tree.listeners > 0) tree.listeners--; removes++; }
     }
-    @Test public void mergedObserverIsRemovedFromActualDestinationBeforeReinstall() {
+    @Test public void mergedObserverReinstallAndDetachCloseUseActualDestination() {
         Access access = new Access(); ObserverLease<Tree> lease = new ObserverLease<>(access);
         Tree floating = new Tree(); Tree attached = new Tree();
         lease.attach(floating); floating.alive = false; attached.listeners = floating.listeners; floating.listeners = 0;
@@ -19,13 +19,12 @@ public class WindowModelsTest {
         lease.attach(attached); assertEquals(2, access.adds);
         lease.detach(); assertEquals(0, attached.listeners);
         lease.close(); lease.close(); assertEquals(access.adds, access.removes);
-    }
-    @Test public void detachCloseNeverLooksUpNewFloatingObserver() {
-        Access access = new Access(); ObserverLease<Tree> lease = new ObserverLease<>(access);
-        Tree first = new Tree(); Tree next = new Tree(); lease.attach(first); lease.detach(); lease.close();
+
+        Access secondAccess = new Access(); ObserverLease<Tree> secondLease = new ObserverLease<>(secondAccess);
+        Tree first = new Tree(); Tree next = new Tree(); secondLease.attach(first); secondLease.detach(); secondLease.close();
         assertEquals(0, first.listeners); assertEquals(0, next.listeners);
-        assertEquals(1, access.removes);
-        assertThrows(IllegalStateException.class, () -> lease.attach(next));
+        assertEquals(1, secondAccess.removes);
+        assertThrows(IllegalStateException.class, () -> secondLease.attach(next));
     }
     @Test public void repeatedInsetsDoNotAccumulateAndExternalWritesArePreserved() {
         InsetsValue base = new InsetsValue(1, 2, 3, 4); InsetsValue insets = new InsetsValue(4, 5, 6, 7);

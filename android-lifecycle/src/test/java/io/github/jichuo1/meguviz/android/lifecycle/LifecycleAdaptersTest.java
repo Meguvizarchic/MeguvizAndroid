@@ -27,7 +27,7 @@ public class LifecycleAdaptersTest {
         final LifecycleRegistry lifecycle = new LifecycleRegistry(this);
         @Override public Lifecycle getLifecycle() { return lifecycle; }
     }
-    @Test public void stopStartAndViewDestroyHaveSeparateOwnership() {
+    @Test public void stopStartViewDestroyAndDialogDismissHaveSeparateOwnership() {
         ActivityController<Activity> controller = Robolectric.buildActivity(Activity.class).setup().visible(); Activity activity = controller.get();
         FrameLayout root = new FrameLayout(activity); View view = new View(activity); root.addView(view); activity.setContentView(root);
         WindowSession session = WindowSession.open(activity.getWindow(), activity, "lifecycle", WindowSession.Permission.OBSERVE);
@@ -48,11 +48,10 @@ public class LifecycleAdaptersTest {
             activityOwner.lifecycle.setCurrentState(Lifecycle.State.DESTROYED); assertTrue(session.lifecycle().isClosed());
             assertEquals(0, activityOwner.lifecycle.getObserverCount()); assertEquals(2, commits.get());
         } finally { session.close(); controller.pause().stop().destroy(); }
-    }
-    @Test public void dialogDismissForwardingClosesOnlyDialogWindow() {
-        ActivityController<Activity> controller = Robolectric.buildActivity(Activity.class).setup().visible(); Activity activity = controller.get();
-        WindowSession parent = WindowSession.open(activity.getWindow(), activity, "activity", WindowSession.Permission.OBSERVE);
-        Dialog dialog = new Dialog(activity); dialog.show();
+
+        ActivityController<Activity> dialogController = Robolectric.buildActivity(Activity.class).setup().visible(); Activity dialogActivity = dialogController.get();
+        WindowSession parent = WindowSession.open(dialogActivity.getWindow(), dialogActivity, "activity", WindowSession.Permission.OBSERVE);
+        Dialog dialog = new Dialog(dialogActivity); dialog.show();
         org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
         WindowSession child = WindowSession.open(dialog.getWindow(), dialog.getContext(), "dialog", WindowSession.Permission.OWN_WINDOW);
         ManualWindowOwner manual = new ManualWindowOwner(child);
@@ -61,6 +60,6 @@ public class LifecycleAdaptersTest {
             dialog.setOnDismissListener(value -> manual.onDismiss());
             dialog.dismiss(); org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
             assertTrue(child.lifecycle().isClosed()); assertFalse(parent.lifecycle().isClosed());
-        } finally { child.close(); parent.close(); controller.pause().stop().destroy(); }
+        } finally { child.close(); parent.close(); dialogController.pause().stop().destroy(); }
     }
 }

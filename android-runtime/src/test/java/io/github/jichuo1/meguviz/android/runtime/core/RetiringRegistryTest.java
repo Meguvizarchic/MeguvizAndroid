@@ -24,7 +24,7 @@ public class RetiringRegistryTest {
                 Collections.emptySet(), Collections.emptySet(), Collections.emptyMap());
     }
 
-    @Test public void replacementKeepsOldLeaseUntilItDrainsAndThenReleasesOnce() {
+    @Test public void replacementAndCloseBoundKeepLeasesUntilDrain() {
         AtomicInteger released = new AtomicInteger();
         RetiringRegistry<String> registry = new RetiringRegistry<>(registry("old"), 2, 2, released::incrementAndGet);
         RetiringRegistry.Lease<String> old = registry.tryAcquire();
@@ -42,26 +42,24 @@ public class RetiringRegistryTest {
         assertFalse(retirement.tryRelease());
         assertEquals(1, released.get());
         current.close();
-    }
 
-    @Test public void boundCoversAllGenerationsAndCloseRejectsNewLeases() {
-        AtomicInteger released = new AtomicInteger();
-        RetiringRegistry<String> registry = new RetiringRegistry<>(registry("old"), 1, 2, () -> {});
-        RetiringRegistry.Lease<String> old = registry.tryAcquire();
-        RetiringRegistry.Retirement<String> retired = registry.replace(registry("new"), released::incrementAndGet);
-        assertNull(registry.tryAcquire());
-        assertFalse(registry.isClosed());
-        old.close();
-        RetiringRegistry.Lease<String> current = registry.tryAcquire();
-        RetiringRegistry.Retirement<String> closed = registry.close();
-        assertTrue(registry.isClosed());
-        assertNull(registry.tryAcquire());
-        assertNull(registry.close());
-        assertThrows(IllegalStateException.class, () -> registry.replace(registry("later"), () -> {}));
+        AtomicInteger boundReleased = new AtomicInteger();
+        RetiringRegistry<String> bound = new RetiringRegistry<>(registry("old"), 1, 2, boundReleased::incrementAndGet);
+        RetiringRegistry.Lease<String> boundOld = bound.tryAcquire();
+        RetiringRegistry.Retirement<String> retired = bound.replace(registry("new"), boundReleased::incrementAndGet);
+        assertNull(bound.tryAcquire());
+        assertFalse(bound.isClosed());
+        boundOld.close();
+        RetiringRegistry.Lease<String> boundCurrent = bound.tryAcquire();
+        RetiringRegistry.Retirement<String> closed = bound.close();
+        assertTrue(bound.isClosed());
+        assertNull(bound.tryAcquire());
+        assertNull(bound.close());
+        assertThrows(IllegalStateException.class, () -> bound.replace(registry("later"), () -> {}));
         assertFalse(closed.tryRelease());
-        current.close();
+        boundCurrent.close();
         assertTrue(closed.tryRelease());
-        assertEquals(1, released.get());
+        assertEquals(1, boundReleased.get());
         assertTrue(retired.tryRelease());
     }
 
@@ -123,49 +121,47 @@ public class RetiringRegistryTest {
         } finally { executor.shutdownNow(); }
     }
 
-    @Test public void invalidBoundsAndSameSnapshotAreRejected() {
+    @Test public void invalidBoundsSameSnapshotAndReleaseReuseAreRejected() throws Exception {
         AdapterRegistry<String> snapshot = registry("one");
         assertThrows(IllegalArgumentException.class, () -> new RetiringRegistry<>(snapshot, 0, 2, () -> {}));
         assertThrows(IllegalArgumentException.class, () -> new RetiringRegistry<>(snapshot, 1, 1, () -> {}));
         RetiringRegistry<String> registry = new RetiringRegistry<>(snapshot, 1, 2, () -> {});
         assertThrows(IllegalArgumentException.class, () -> registry.replace(snapshot, () -> {}));
-    }
 
-    @Test public void snapshotCannotBeReusedUntilItsReleaseActionFinishes() throws Exception {
         AdapterRegistry<String> a = registry("a");
         AdapterRegistry<String> b = registry("b");
         CountDownLatch releaseStarted = new CountDownLatch(1);
         CountDownLatch finishRelease = new CountDownLatch(1);
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
-            RetiringRegistry<String> registry = new RetiringRegistry<>(a, 2, 2, () -> {
+            RetiringRegistry<String> reuse = new RetiringRegistry<>(a, 2, 2, () -> {
                 releaseStarted.countDown();
                 try {
                     if (!finishRelease.await(5, TimeUnit.SECONDS)) throw new AssertionError("release timed out");
                 } catch (InterruptedException error) { throw new AssertionError(error); }
             });
-            RetiringRegistry.Lease<String> lease = registry.tryAcquire();
-            RetiringRegistry.Retirement<String> oldA = registry.replace(b, () -> {});
-            assertThrows(IllegalArgumentException.class, () -> registry.replace(a, () -> {}));
-            assertThrows(IllegalStateException.class, () -> registry.replace(registry("c"), () -> {}));
+            RetiringRegistry.Lease<String> lease = reuse.tryAcquire();
+            RetiringRegistry.Retirement<String> oldA = reuse.replace(b, () -> {});
+            assertThrows(IllegalArgumentException.class, () -> reuse.replace(a, () -> {}));
+            assertThrows(IllegalStateException.class, () -> reuse.replace(registry("c"), () -> {}));
             assertFalse(oldA.tryRelease());
             lease.close();
             Future<Boolean> releasing = executor.submit(oldA::tryRelease);
             assertTrue(releaseStarted.await(5, TimeUnit.SECONDS));
-            assertThrows(IllegalArgumentException.class, () -> registry.replace(a, () -> {}));
-            assertThrows(IllegalStateException.class, () -> registry.replace(registry("c"), () -> {}));
+            assertThrows(IllegalArgumentException.class, () -> reuse.replace(a, () -> {}));
+            assertThrows(IllegalStateException.class, () -> reuse.replace(registry("c"), () -> {}));
             finishRelease.countDown();
             assertTrue(releasing.get(5, TimeUnit.SECONDS));
-            RetiringRegistry.Retirement<String> oldB = registry.replace(a, () -> {});
+            RetiringRegistry.Retirement<String> oldB = reuse.replace(a, () -> {});
             assertTrue(oldB.tryRelease());
-            assertTrue(registry.close().tryRelease());
+            assertTrue(reuse.close().tryRelease());
         } finally {
             finishRelease.countDown();
             executor.shutdownNow();
         }
     }
 
-    @Test public void closedLeaseClearsSnapshotSlotAndStateFields() throws Exception {
+    @Test public void closedLeaseAndRetirementClearSnapshotSlotAndStateFields() throws Exception {
         RetiringRegistry<String> registry = new RetiringRegistry<>(registry("old"), 1, 2, () -> {});
         RetiringRegistry.Lease<String> lease = registry.tryAcquire();
         lease.close();
@@ -173,20 +169,18 @@ public class RetiringRegistryTest {
         assertNull("slot reference must be released", field(lease, "slot"));
         assertNull("state reference must be released", field(lease, "state"));
         registry.close().tryRelease();
-    }
 
-    @Test public void retainedClosedLeaseDisconnectsAllStrongReferences() throws Exception {
         AdapterRegistry<String> snapshot = registry("old");
         RetiringRegistry<String> owner = new RetiringRegistry<>(snapshot, 1, 2, () -> {});
-        RetiringRegistry.Lease<String> lease = owner.tryAcquire();
+        RetiringRegistry.Lease<String> retainedLease = owner.tryAcquire();
         RetiringRegistry.Retirement<String> retired = owner.replace(registry("new"), () -> {});
         Object retiredSlot = field(retired, "slot");
         assertNotNull("retirement must reference the retired slot before release", retiredSlot);
-        lease.close();
-        assertNotNull("closed lease is deliberately retained", lease);
-        assertNull("retained closed lease snapshot must be null", field(lease, "snapshot"));
-        assertNull("retained closed lease slot must be null", field(lease, "slot"));
-        assertNull("retained closed lease state must be null", field(lease, "state"));
+        retainedLease.close();
+        assertNotNull("closed lease is deliberately retained", retainedLease);
+        assertNull("retained closed lease snapshot must be null", field(retainedLease, "snapshot"));
+        assertNull("retained closed lease slot must be null", field(retainedLease, "slot"));
+        assertNull("retained closed lease state must be null", field(retainedLease, "state"));
         assertTrue(retired.tryRelease());
         assertNull("retirement slot must be cleared", field(retired, "slot"));
         assertNull("released slot snapshot must be cleared", field(retiredSlot, "snapshot"));
@@ -194,21 +188,19 @@ public class RetiringRegistryTest {
         assertFalse("released snapshot must leave the registry map", snapshots.containsKey(snapshot));
         owner.close().tryRelease();
         assertTrue("registry map must be empty after every slot is released", snapshots.isEmpty());
-    }
 
-    @Test public void forgetReleasesSlotSnapshotAndRegistryMapEntry() throws Exception {
-        AdapterRegistry<String> snapshot = registry("old");
-        RetiringRegistry<String> owner = new RetiringRegistry<>(snapshot, 1, 2, () -> {});
-        RetiringRegistry.Lease<String> lease = owner.tryAcquire();
-        RetiringRegistry.Retirement<String> retired = owner.replace(registry("new"), () -> {});
-        lease.close();
-        assertTrue(retired.isDrained());
-        assertTrue(retired.tryRelease());
-        assertNull("retirement slot must be cleared", field(retired, "slot"));
-        Map<?, ?> snapshots = (Map<?, ?>) field(field(owner, "state"), "snapshots");
-        assertFalse("released snapshot must leave the registry map", snapshots.containsKey(snapshot));
-        owner.close().tryRelease();
-        assertTrue("registry map must be empty after every slot is released", snapshots.isEmpty());
+        AdapterRegistry<String> forgetSnapshot = registry("old");
+        RetiringRegistry<String> forgetOwner = new RetiringRegistry<>(forgetSnapshot, 1, 2, () -> {});
+        RetiringRegistry.Lease<String> forgetLease = forgetOwner.tryAcquire();
+        RetiringRegistry.Retirement<String> forgetRetired = forgetOwner.replace(registry("new"), () -> {});
+        forgetLease.close();
+        assertTrue(forgetRetired.isDrained());
+        assertTrue(forgetRetired.tryRelease());
+        assertNull("retirement slot must be cleared", field(forgetRetired, "slot"));
+        Map<?, ?> forgetSnapshots = (Map<?, ?>) field(field(forgetOwner, "state"), "snapshots");
+        assertFalse("released snapshot must leave the registry map", forgetSnapshots.containsKey(forgetSnapshot));
+        forgetOwner.close().tryRelease();
+        assertTrue("registry map must be empty after every slot is released", forgetSnapshots.isEmpty());
     }
 
     @Test public void crossThreadCloseWithHappensBeforeThenSnapshotThrows() throws Exception {

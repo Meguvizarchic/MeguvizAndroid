@@ -27,7 +27,7 @@ public class FrameBufferReuseContractTest {
         return new BoundedMailbox(scope, scheduler, runtime.errors::add, states, commands, quota);
     }
 
-    @Test public void drainReusesTheSameBufferInstanceAcrossFrames() {
+    @Test public void drainReusesTheSameBufferInstanceAndLeavesNoWorkBehind() {
         BoundedMailbox box = mailbox(4, 4, 8);
         List<?> buffer = box.drainBatch;
         box.offerCommand(token, () -> commits.add(1), releases::incrementAndGet);
@@ -41,30 +41,29 @@ public class FrameBufferReuseContractTest {
         assertEquals(Arrays.asList(1, 2), commits);
         assertEquals(2, releases.get());
         assertFalse(runtime.hasFrame());
-    }
 
-    @Test public void drainReusedBufferLeavesNoWorkBehindAcrossFrames() {
-        BoundedMailbox box = mailbox(8, 8, 8);
+        commits.clear(); releases.set(0);
+        BoundedMailbox workBox = mailbox(8, 8, 8);
         BoundedMailbox.Slot[] slots = new BoundedMailbox.Slot[4];
-        for (int i = 0; i < slots.length; i++) slots[i] = box.newSlot();
+        for (int i = 0; i < slots.length; i++) slots[i] = workBox.newSlot();
         for (int frame = 0; frame < 6; frame++) {
             for (int i = 0; i < slots.length; i++) {
                 final int value = i;
-                box.offerState(slots[value], token, () -> commits.add(value), releases::incrementAndGet);
+                workBox.offerState(slots[value], token, () -> commits.add(value), releases::incrementAndGet);
             }
-            box.offerCommand(token, () -> commits.add(100), releases::incrementAndGet);
-            box.offerCommand(token, () -> commits.add(101), releases::incrementAndGet);
+            workBox.offerCommand(token, () -> commits.add(100), releases::incrementAndGet);
+            workBox.offerCommand(token, () -> commits.add(101), releases::incrementAndGet);
             runtime.frame();
-            assertTrue("buffer must be empty after a frame", box.drainBatch.isEmpty());
+            assertTrue("buffer must be empty after a frame", workBox.drainBatch.isEmpty());
         }
         assertEquals(6 * 6, commits.size());
         assertEquals(6 * 6, releases.get());
-        assertEquals(0, box.pendingStateCount());
-        assertEquals(0, box.pendingCommandCount());
+        assertEquals(0, workBox.pendingStateCount());
+        assertEquals(0, workBox.pendingCommandCount());
         assertFalse(runtime.hasFrame());
     }
 
-    @Test public void pausedMailboxDuringDrainLeavesReusableBufferClean() {
+    @Test public void pausedAndFatalDrainLeaveReusableBufferClean() {
         BoundedMailbox box = mailbox(4, 4, 8); BoundedMailbox.Slot slot = box.newSlot();
         box.offerCommand(token, () -> box.setPaused(true), releases::incrementAndGet);
         box.offerState(slot, token, () -> commits.add(2), releases::incrementAndGet);
@@ -77,21 +76,16 @@ public class FrameBufferReuseContractTest {
         assertEquals(Arrays.asList(3, 2), commits);
         assertTrue(box.drainBatch.isEmpty());
         assertFalse(runtime.hasFrame());
-    }
 
-    @Test public void fatalErrorDuringDrainStillClearsReusedBuffer() {
-        BoundedMailbox box = mailbox(1, 4, 4);
-        box.offerCommand(token, () -> { throw new LinkageError("injected"); }, releases::incrementAndGet);
+        commits.clear(); releases.set(0);
+        BoundedMailbox fatalBox = mailbox(1, 4, 4);
+        fatalBox.offerCommand(token, () -> { throw new LinkageError("injected"); }, releases::incrementAndGet);
         assertThrows(LinkageError.class, runtime::frame);
-        assertTrue("the reused buffer must be cleared even when a fatal error escapes", box.drainBatch.isEmpty());
-        assertTrue(box.isClosed());
+        assertTrue("the reused buffer must be cleared even when a fatal error escapes", fatalBox.drainBatch.isEmpty());
+        assertTrue(fatalBox.isClosed());
     }
 
-    /**
-     * A driver that delivers the frame synchronously inside request() is outside the FrameDriver
-     * contract, but it must still not corrupt or double-use the reused buffers.
-     */
-    @Test public void synchronousDriverDeliveryKeepsBufferAndOrderCorrect() {
+    @Test public void synchronousAndReentrantDrainKeepBufferAndOrderCorrect() throws Exception {
         SynchronousDriver driver = new SynchronousDriver();
         FrameScheduler local = new FrameScheduler(runtime, driver, runtime.errors::add, 64);
         BoundedMailbox box = new BoundedMailbox(scope, local, runtime.errors::add, 8, 8, 8);
@@ -112,36 +106,31 @@ public class FrameBufferReuseContractTest {
         assertEquals(Arrays.asList(1, 2, 3), commits);
         assertEquals(3, releases.get());
         box.close(); local.close();
-    }
 
-    /**
-     * White-box: drives the reentrant drain path that the public contract makes unreachable, to
-     * prove the instance buffer falls back to a local list instead of being corrupted mid-iteration.
-     */
-    @Test public void reentrantDrainFallsBackToLocalBatchWithoutCorruptingTheInstanceBuffer() throws Exception {
-        BoundedMailbox box = mailbox(8, 8, 8);
+        commits.clear(); releases.set(0);
+        BoundedMailbox reentrantBox = mailbox(8, 8, 8);
         Method drain = BoundedMailbox.class.getDeclaredMethod("drain", FrameTick.class, int.class);
         drain.setAccessible(true);
-        box.offerCommand(token, () -> {
+        reentrantBox.offerCommand(token, () -> {
             commits.add(1);
-            box.offerCommand(token, () -> commits.add(3), releases::incrementAndGet);
-            try { drain.invoke(box, new FrameTick(99, 1L, null, null), 8); }
+            reentrantBox.offerCommand(token, () -> commits.add(3), releases::incrementAndGet);
+            try { drain.invoke(reentrantBox, new FrameTick(99, 1L, null, null), 8); }
             catch (ReflectiveOperationException error) { throw new AssertionError(error); }
         }, releases::incrementAndGet);
-        box.offerCommand(token, () -> commits.add(2), releases::incrementAndGet);
+        reentrantBox.offerCommand(token, () -> commits.add(2), releases::incrementAndGet);
         runtime.frame();
         assertEquals("every payload must run exactly once", Arrays.asList(1, 3, 2), commits);
         assertEquals(3, releases.get());
-        assertTrue(box.drainBatch.isEmpty());
-        assertEquals(0, box.pendingCommandCount());
-        box.offerCommand(token, () -> commits.add(4), releases::incrementAndGet);
+        assertTrue(reentrantBox.drainBatch.isEmpty());
+        assertEquals(0, reentrantBox.pendingCommandCount());
+        reentrantBox.offerCommand(token, () -> commits.add(4), releases::incrementAndGet);
         runtime.frame();
         assertEquals(Arrays.asList(1, 3, 2, 4), commits);
-        assertTrue(box.drainBatch.isEmpty());
+        assertTrue(reentrantBox.drainBatch.isEmpty());
         assertFalse(runtime.hasFrame());
     }
 
-    @Test public void rotationAndQuotaSurviveChannelCloseAndOpenInsideFrame() throws Exception {
+    @Test public void rotationQuotaAndSnapshotGrowthSurviveChannelChanges() throws Exception {
         ControlledRuntime local = new ControlledRuntime();
         FrameScheduler rotating = local.scheduler(64);
         int[] calls = new int[4];
@@ -168,27 +157,25 @@ public class FrameBufferReuseContractTest {
         assertEquals(6, calls[0]);
         assertEquals(6, calls[2]);
         assertEquals(5, calls[3]);
-    }
 
-    @Test public void snapshotBufferGrowsWhenChannelsAppearAndKeepsRotation() throws Exception {
-        ControlledRuntime local = new ControlledRuntime();
-        FrameScheduler growing = local.scheduler(64);
-        List<FrameScheduler.FrameChannel> channels = new ArrayList<>();
-        int[] calls = new int[5];
-        for (int round = 0; round < calls.length; round++) {
+        ControlledRuntime growingRuntime = new ControlledRuntime();
+        FrameScheduler growing = growingRuntime.scheduler(64);
+        List<FrameScheduler.FrameChannel> growingChannels = new ArrayList<>();
+        int[] growingCalls = new int[5];
+        for (int round = 0; round < growingCalls.length; round++) {
             final int index = round;
-            channels.add(growing.openChannel(new Object(), (tick, quota) -> { calls[index]++; return 1; }, 16));
+            growingChannels.add(growing.openChannel(new Object(), (tick, quota) -> { growingCalls[index]++; return 1; }, 16));
             for (int frame = 0; frame < 4; frame++) {
-                for (FrameScheduler.FrameChannel channel : channels) channel.requestFrame();
-                local.frame();
+                for (FrameScheduler.FrameChannel channel : growingChannels) channel.requestFrame();
+                growingRuntime.frame();
                 assertSnapshotBufferCleared(growing);
             }
         }
         // Channel i appears in round i and then runs in every remaining round: 4*(5-i) turns.
-        assertArrayEquals(new int[] {20, 16, 12, 8, 4}, calls);
+        assertArrayEquals(new int[] {20, 16, 12, 8, 4}, growingCalls);
     }
 
-    @Test public void fatalChannelCallbackClearsSchedulerSnapshotBuffer() throws Exception {
+    @Test public void fatalChannelCallbackAndConsecutiveReentrantDrainsKeepBuffersClean() throws Exception {
         ControlledRuntime local = new ControlledRuntime();
         FrameScheduler failing = local.scheduler(2);
         AtomicInteger healthy = new AtomicInteger();
@@ -201,16 +188,8 @@ public class FrameBufferReuseContractTest {
         local.frame();
         assertEquals(1, healthy.get());
         assertSnapshotBufferCleared(failing);
-    }
 
-    /**
-     * Regression: two consecutive reentrant drains from different outer actions. The first
-     * reentrant return must not reset the draining flag, or the second reentrant call reuses and
-     * clears the instance buffer the outer loop is still walking (ConcurrentModificationException
-     * and lost items). Green on HEAD and on the fixed sources; red on an unconditional
-     * draining=false exit.
-     */
-    @Test public void consecutiveReentrantDrainsDoNotResetDrainingForTheOuterBatch() throws Exception {
+        commits.clear(); releases.set(0); runtime.errors.clear();
         BoundedMailbox box = mailbox(8, 8, 8);
         Method drain = BoundedMailbox.class.getDeclaredMethod("drain", FrameTick.class, int.class);
         drain.setAccessible(true);

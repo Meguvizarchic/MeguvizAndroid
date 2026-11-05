@@ -10,7 +10,7 @@ import java.util.concurrent.RejectedExecutionException;
 import static org.junit.Assert.*;
 
 public class TestkitContractTest {
-    @Test public void reverseExecutorCompletionCannotCommitToReboundScope() {
+    @Test public void reverseExecutorCompletionAndOverflowRejection() {
         ControlledRuntime runtime = new ControlledRuntime(); LifecycleScope scope = runtime.activeScope();
         ControlledExecutor executor = new ControlledExecutor(2); List<Integer> committed = new ArrayList<>();
         WorkToken old = scope.lease(LifecycleScope.ALL).token();
@@ -19,12 +19,11 @@ public class TestkitContractTest {
         executor.execute(() -> scope.commit(current, () -> committed.add(2)));
         executor.runAt(1); executor.runAt(0); assertEquals(Arrays.asList(2), committed);
         assertEquals(0, executor.pendingCount());
-    }
-    @Test public void controlledExecutorRejectsOverflowAndDropsCancelledClosures() {
-        ControlledExecutor executor = new ControlledExecutor(1);
-        executor.execute(() -> fail("cancelled"));
-        assertThrows(RejectedExecutionException.class, () -> executor.execute(() -> {}));
-        executor.cancelAll(); assertEquals(0, executor.pendingCount());
+
+        ControlledExecutor overflow = new ControlledExecutor(1);
+        overflow.execute(() -> fail("cancelled"));
+        assertThrows(RejectedExecutionException.class, () -> overflow.execute(() -> {}));
+        overflow.cancelAll(); assertEquals(0, overflow.pendingCount());
     }
     @Test public void virtualClockRejectsBackwardsTimeAndOverflow() {
         TestClock clock = new TestClock(); assertEquals(0, clock.nowNanos());

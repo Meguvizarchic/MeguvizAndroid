@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicReference
 class ExtensionsGoldenTest {
     private val context: Context get() = RuntimeEnvironment.getApplication()
 
-    @Test fun textColorReadsSelectedStateAndIntegerSetter() {
+    @Test fun textColorAndConversionPreserveStateAndNullContract() {
         val view = TextView(context)
         view.setTextColor(ColorStateList(arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()),
             intArrayOf(Color.RED, Color.BLUE)))
@@ -44,10 +44,7 @@ class ExtensionsGoldenTest {
         view.textColor = Color.GREEN
         assertEquals(Color.GREEN, view.currentTextColor)
         assertFalse(view.textColors.isStateful)
-    }
 
-    @Test fun textConversionPreservesSpannableContentAndNullContract() {
-        val view = TextView(context)
         view.text = SpannableString("hello")
         assertEquals("hello", view.textToString())
         view.text = null
@@ -56,7 +53,7 @@ class ExtensionsGoldenTest {
         assertEquals("再见", view.textToString())
     }
 
-    @Test fun childHandlesEmptyBoundsAndWrongTypes() {
+    @Test fun childAndParentHandleBoundsTypesAndRemoval() {
         val root = FrameLayout(context)
         assertNull(root.firstChildOrNull)
         assertNull(root.childOrNull(-1))
@@ -69,23 +66,21 @@ class ExtensionsGoldenTest {
         assertNull(root.childOrNull(1))
         assertThrows(IllegalStateException::class.java) { root.child<FrameLayout>(0) }
         assertThrows(IllegalStateException::class.java) { root.child(-1) }
+
+        val ownedRoot = FrameLayout(context)
+        val ownedChild = View(context)
+        ownedChild.removeSelf()
+        assertNull(ownedChild.parentOrNull())
+        ownedRoot.addView(ownedChild)
+        assertSame(ownedRoot, ownedChild.parentOrNull<FrameLayout>())
+        assertNull(ownedChild.parentOrNull<LinearLayout>())
+        ownedChild.removeSelf()
+        assertNull(ownedChild.parent)
+        assertEquals(0, ownedRoot.childCount)
+        ownedChild.removeSelf()
     }
 
-    @Test fun parentAndRemovalRespectActualOwnership() {
-        val root = FrameLayout(context)
-        val child = View(context)
-        child.removeSelf()
-        assertNull(child.parentOrNull())
-        root.addView(child)
-        assertSame(root, child.parentOrNull<FrameLayout>())
-        assertNull(child.parentOrNull<LinearLayout>())
-        child.removeSelf()
-        assertNull(child.parent)
-        assertEquals(0, root.childCount)
-        child.removeSelf()
-    }
-
-    @Test fun paddingAxesRetainOmittedEdgesAndUseAbsoluteCoordinates() {
+    @Test fun paddingAndMarginsRetainOmittedEdgesAndUseAbsoluteCoordinates() {
         val view = View(context)
         view.layoutDirection = View.LAYOUT_DIRECTION_RTL
         view.setPadding(1, 2, 3, 4)
@@ -95,30 +90,28 @@ class ExtensionsGoldenTest {
         assertEquals(listOf(7, 0, 7, 0), padding(view))
         view.updatePadding()
         assertEquals(listOf(7, 0, 7, 0), padding(view))
-    }
 
-    @Test fun marginsPreserveOtherEdgesAndWrongParamsAreNoop() {
-        val view = View(context)
+        val marginView = View(context)
         val wrong = ViewGroup.LayoutParams(20, 30)
-        view.layoutParams = wrong
-        view.setMargins(99)
-        view.updateMargins(horizontal = 9)
-        assertSame(wrong, view.layoutParams)
+        marginView.layoutParams = wrong
+        marginView.setMargins(99)
+        marginView.updateMargins(horizontal = 9)
+        assertSame(wrong, marginView.layoutParams)
         val params = FrameLayout.LayoutParams(20, 30)
         params.setMargins(1, 2, 3, 4)
-        view.layoutParams = params
-        view.updateMargins(vertical = 8)
+        marginView.layoutParams = params
+        marginView.updateMargins(vertical = 8)
         assertEquals(listOf(1, 8, 3, 8), margins(params))
-        assertTrue(view.isLayoutRequested)
+        assertTrue(marginView.isLayoutRequested)
         params.updateMargins(horizontal = 6)
         assertEquals(listOf(6, 8, 6, 8), margins(params))
-        view.setMargins(-1, 0, 5, 9)
+        marginView.setMargins(-1, 0, 5, 9)
         assertEquals(listOf(-1, 0, 5, 9), margins(params))
-        view.setMargins(4)
+        marginView.setMargins(4)
         assertEquals(listOf(4, 4, 4, 4), margins(params))
     }
 
-    @Test fun dpPreservesNumberTypesSentinelsAndTruncation() {
+    @Test fun dpAndSpPreserveNumberTypesSentinelsAndTruncation() {
         assertEquals(5, dpToPixels(2, 2.75f))
         assertEquals(5L, dpToPixels(2L, 2.75f))
         assertEquals(5.5f, dpToPixels(2f, 2.75f))
@@ -128,9 +121,7 @@ class ExtensionsGoldenTest {
         assertEquals(0, dpToPixels(0, 3f))
         assertThrows(IllegalStateException::class.java) { dpToPixels(1.toShort(), 3f) }
         assertEquals(dpToPixels(20, context.resources.displayMetrics.density), 20.toPx(context))
-    }
 
-    @Test fun spUsesPlatformConversion() {
         val resources = context.resources
         assertEquals(android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,
             16f, resources.displayMetrics), 16f.spToPx(resources), 0f)
@@ -146,7 +137,7 @@ class ExtensionsGoldenTest {
         assertFalse(configuration.isUiInNightMode)
     }
 
-    @Test fun versionCodeRetainsHighBitsOnModernPlatform() {
+    @Test fun versionCodeAndSdkPredicatesRetainHighBitsAndBounds() {
         val info = PackageInfo()
         @Suppress("DEPRECATION")
         run { info.versionCode = 123 }
@@ -154,9 +145,7 @@ class ExtensionsGoldenTest {
             info.setLongVersionCode(0x1_0000_007bL)
             assertEquals(0x1_0000_007bL, info.versionCodeCompat)
         } else assertEquals(123L, info.versionCodeCompat)
-    }
 
-    @Test fun sdkPredicatesPreserveStrictAndInclusiveBounds() {
         assertEquals(Build.VERSION.SDK_INT, AndroidVersion.code)
         assertTrue(AndroidVersion.isAtLeast(Build.VERSION.SDK_INT))
         assertTrue(AndroidVersion.isAtMost(Build.VERSION.SDK_INT))
@@ -165,16 +154,14 @@ class ExtensionsGoldenTest {
         assertFalse(AndroidVersion.isAtMost(Build.VERSION.SDK_INT - 1))
     }
 
-    @Test fun toastDefaultsAndDurationExecuteOnMain() {
+    @Test fun toastDefaultsDurationAndBackgroundRejection() {
         context.toast("short")
         assertEquals("short", ShadowToast.getTextOfLatestToast())
         assertEquals(Toast.LENGTH_SHORT, ShadowToast.getLatestToast().duration)
         View(context).toast("long", Toast.LENGTH_LONG)
         assertEquals("long", ShadowToast.getTextOfLatestToast())
         assertEquals(Toast.LENGTH_LONG, ShadowToast.getLatestToast().duration)
-    }
 
-    @Test fun toastRejectsBackgroundWithoutQueueing() {
         val before = ShadowToast.shownToastCount()
         val caught = AtomicReference<Throwable>()
         Thread { try { context.toast("forbidden") } catch (error: Throwable) { caught.set(error) } }
@@ -183,7 +170,7 @@ class ExtensionsGoldenTest {
         assertEquals(before, ShadowToast.shownToastCount())
     }
 
-    @Test fun componentFlagsAndManifestDefaultsAreExplicit() {
+    @Test fun componentFlagsManifestDefaultsAndStateSemantics() {
         val manager = context.packageManager
         val component = ComponentName(context.packageName, "TestAlias")
         val applicationInfo = ApplicationInfo().apply { packageName = context.packageName; enabled = true }
@@ -204,9 +191,7 @@ class ExtensionsGoldenTest {
         manager.setApplicationEnabledSetting(component.packageName, PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
             PackageManager.DONT_KILL_APP)
         assertFalse(manager.isActivityComponentEnabled(component))
-    }
 
-    @Test fun allComponentStatesHaveDefinedSemantics() {
         assertFalse(effectiveEnabled(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, false))
         assertTrue(effectiveEnabled(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, true))
         assertTrue(effectiveEnabled(PackageManager.COMPONENT_ENABLED_STATE_ENABLED, false))
@@ -217,13 +202,11 @@ class ExtensionsGoldenTest {
         }
     }
 
-    @Test fun rootInsetsProbeDoesNotInstallAnythingOnUnattachedView() {
+    @Test fun rootInsetsProbeAndRemovalDetachDispatchExactlyOnce() {
         val view = View(context)
         assertNull(view.rootStatusBarInsetTopOrNull())
         assertFalse(view.isAttachedToWindow)
-    }
 
-    @Test fun removalDispatchesDetachExactlyOnce() {
         val controller = Robolectric.buildActivity(Activity::class.java).setup().visible()
         try {
             val root = FrameLayout(controller.get())

@@ -36,7 +36,7 @@ public final class MailboxBackgroundProducerExampleTest {
     private final WorkToken token = scope.lease(LifecycleScope.ALL).token();
     private final AtomicInteger releases = new AtomicInteger();
 
-    @Test public void backgroundProducersCoalescePerKeyAndKeepPerProducerFifo() throws Exception {
+    @Test public void backgroundProducersCoalesceAndStormKeepsOneWakeup() throws Exception {
         BoundedMailbox box = new BoundedMailbox(scope, scheduler, runtime.errors::add, 64, 1024, 512);
         BoundedMailbox.Slot shared = box.newSlot();
         int producers = 4, perProducer = 200;
@@ -90,30 +90,29 @@ public final class MailboxBackgroundProducerExampleTest {
         assertFalse(runtime.hasFrame());
         assertTrue(runtime.errors.isEmpty());
         box.close();
-    }
 
-    @Test public void backgroundStormKeepsOneOutstandingWakeupAndBoundedStorage() {
-        BoundedMailbox box = new BoundedMailbox(scope, scheduler, runtime.errors::add, 2, 2, 2);
-        BoundedMailbox.Slot slot = box.newSlot();
-        ConcurrentLinkedQueue<Long> applied = new ConcurrentLinkedQueue<>();
+        runtime.posts = 0; releases.set(0);
+        BoundedMailbox stormBox = new BoundedMailbox(scope, scheduler, runtime.errors::add, 2, 2, 2);
+        BoundedMailbox.Slot slot = stormBox.newSlot();
+        ConcurrentLinkedQueue<Long> stormApplied = new ConcurrentLinkedQueue<>();
         ControlledRuntime.background(() -> {
             for (int i = 0; i < 10_000; i++) {
                 final long value = i;
-                assertTrue(box.offerState(slot, token, () -> applied.add(value), releases::incrementAndGet).accepted());
-                assertEquals(1, box.pendingStateCount());
+                assertTrue(stormBox.offerState(slot, token, () -> stormApplied.add(value), releases::incrementAndGet).accepted());
+                assertEquals(1, stormBox.pendingStateCount());
             }
         });
         assertEquals(1, runtime.posts);
         assertEquals(1, runtime.queuedSignals());
         runtime.drain();
-        assertEquals(1, applied.size());
-        assertEquals(9999L, (long) applied.peek());
+        assertEquals(1, stormApplied.size());
+        assertEquals(9999L, (long) stormApplied.peek());
         assertEquals(10_000, releases.get());
         assertFalse(runtime.hasFrame());
-        box.close();
+        stormBox.close();
     }
 
-    @Test public void backgroundBackpressureRejectsNewKeysButAllowsReplacement() {
+    @Test public void backgroundBackpressureAndActionFailureReleaseEveryPayload() {
         BoundedMailbox box = new BoundedMailbox(scope, scheduler, runtime.errors::add, 2, 2, 8);
         BoundedMailbox.Slot first = box.newSlot(), second = box.newSlot(), third = box.newSlot();
         List<Admission> admissions = Collections.synchronizedList(new ArrayList<>());
@@ -134,20 +133,19 @@ public final class MailboxBackgroundProducerExampleTest {
         assertEquals(5, releases.get());
         assertFalse(runtime.hasFrame());
         box.close();
-    }
 
-    @Test public void backgroundActionFailureClosesMailboxAndStillReleasesEveryPayload() {
-        BoundedMailbox box = new BoundedMailbox(scope, scheduler, runtime.errors::add, 4, 4, 8);
+        releases.set(0); runtime.errors.clear();
+        BoundedMailbox failingBox = new BoundedMailbox(scope, scheduler, runtime.errors::add, 4, 4, 8);
         AtomicBoolean laterRan = new AtomicBoolean();
         ControlledRuntime.background(() -> {
-            box.offerCommand(token, () -> { throw new IllegalArgumentException("boom"); }, releases::incrementAndGet);
-            box.offerCommand(token, () -> laterRan.set(true), releases::incrementAndGet);
+            failingBox.offerCommand(token, () -> { throw new IllegalArgumentException("boom"); }, releases::incrementAndGet);
+            failingBox.offerCommand(token, () -> laterRan.set(true), releases::incrementAndGet);
         });
         runtime.drain();
-        assertTrue(box.isClosed());
+        assertTrue(failingBox.isClosed());
         assertFalse("work admitted beside a failure must not run", laterRan.get());
         assertEquals(2, releases.get());
-        assertEquals("boom", box.lastFailure().getMessage());
+        assertEquals("boom", failingBox.lastFailure().getMessage());
         assertEquals(1, runtime.errors.size());
         assertEquals(0, scheduler.channelCount());
     }

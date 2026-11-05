@@ -61,14 +61,12 @@ public class ScopedResourceLoaderTest {
             scope.close();
         }
     }
-    @Test public void scopeMismatchIsRejectedBeforeAttaching() {
+    @Test public void scopeMismatchAndFailedAttachAreRejectedBeforeOwnersAttach() {
         try (var activity = Robolectric.buildActivity(Activity.class).setup()) {
             ResourceScope scope = scope(activity.get());
             assertThrows(IllegalArgumentException.class, () -> ScopedResourceLoader.open(scope, Resources.getSystem()));
             scope.close();
         }
-    }
-    @Test public void failedAttachInvalidatesAndAttemptsDetachment() {
         try (var activity = Robolectric.buildActivity(Activity.class).setup()) {
             ResourceScope scope = scope(activity.get()); FakeBackend fake = new FakeBackend();
             ResourceState.Token before = scope.state().token(ResourceState.ALL);
@@ -79,7 +77,7 @@ public class ScopedResourceLoaderTest {
             scope.close();
         }
     }
-    @Test public void attachAndDetachFailureExposesRetryableCleanup() {
+    @Test public void attachDetachFailureAndFailedMutationExposeRetryableCleanup() throws Exception {
         try (var activity = Robolectric.buildActivity(Activity.class).setup()) {
             ResourceScope scope = scope(activity.get()); FakeBackend fake = new FakeBackend();
             fake.failAttach = true; fake.failDetach = true;
@@ -91,8 +89,23 @@ public class ScopedResourceLoaderTest {
             assertEquals(List.of("attach", "detach", "detach", "set:[]"), fake.events);
             scope.close();
         }
+        try (var activity = Robolectric.buildActivity(Activity.class).setup(); var descriptor = descriptor(activity.get())) {
+            ResourceScope scope = scope(activity.get()); FakeBackend fake = new FakeBackend();
+            ScopedResourceLoader loader = ScopedResourceLoader.openWithBackend(scope, fake);
+            loader.putApk("base", descriptor);
+            ResourceState.Token before = scope.state().token(ResourceState.ALL);
+            fake.failSet = true;
+            assertThrows(IllegalStateException.class, () -> loader.putApk("overlay", descriptor));
+            assertFalse(scope.state().isCurrent(before));
+            assertThrows(IllegalStateException.class, () -> loader.remove("base"));
+            fake.failDetach = true;
+            assertThrows(IllegalStateException.class, loader::close);
+            loader.close();
+            assertTrue(fake.events.contains("close:p1")); assertTrue(fake.events.contains("close:p2"));
+            scope.close();
+        }
     }
-    @Test public void orderReloadRemoveAndCloseRejectOldTokensAndReleaseOwnedProviders() throws Exception {
+    @Test public void orderReloadRemoveCloseAndProviderCloseFailureReleaseOwnedProviders() throws Exception {
         try (var activity = Robolectric.buildActivity(Activity.class).setup(); var descriptor = descriptor(activity.get())) {
             ResourceScope scope = scope(activity.get()); FakeBackend fake = new FakeBackend();
             ScopedResourceLoader loader = ScopedResourceLoader.openWithBackend(scope, fake);
@@ -112,36 +125,6 @@ public class ScopedResourceLoaderTest {
             loader.close(); assertThrows(IllegalStateException.class, () -> loader.remove("base"));
             scope.close();
         }
-    }
-    @Test public void foreignChangeInvalidatesBothResourceAndThemeEpochs() {
-        try (var activity = Robolectric.buildActivity(Activity.class).setup()) {
-            ResourceScope scope = scope(activity.get());
-            ScopedResourceLoader loader = ScopedResourceLoader.openWithBackend(scope, new FakeBackend());
-            ResourceState.Token resources = scope.state().token(ResourceState.RESOURCES);
-            ResourceState.Token theme = scope.state().token(ResourceState.THEME);
-            loader.invalidateExternalChange();
-            assertFalse(scope.state().isCurrent(resources)); assertFalse(scope.state().isCurrent(theme));
-            loader.close(); scope.close();
-        }
-    }
-    @Test public void failedMutationInvalidatesFirstAndCloseRetriesOwnedCleanup() throws Exception {
-        try (var activity = Robolectric.buildActivity(Activity.class).setup(); var descriptor = descriptor(activity.get())) {
-            ResourceScope scope = scope(activity.get()); FakeBackend fake = new FakeBackend();
-            ScopedResourceLoader loader = ScopedResourceLoader.openWithBackend(scope, fake);
-            loader.putApk("base", descriptor);
-            ResourceState.Token before = scope.state().token(ResourceState.ALL);
-            fake.failSet = true;
-            assertThrows(IllegalStateException.class, () -> loader.putApk("overlay", descriptor));
-            assertFalse(scope.state().isCurrent(before));
-            assertThrows(IllegalStateException.class, () -> loader.remove("base"));
-            fake.failDetach = true;
-            assertThrows(IllegalStateException.class, loader::close);
-            loader.close();
-            assertTrue(fake.events.contains("close:p1")); assertTrue(fake.events.contains("close:p2"));
-            scope.close();
-        }
-    }
-    @Test public void providerCloseFailureCanBeRetriedAndClosedScopeStillReleases() throws Exception {
         try (var activity = Robolectric.buildActivity(Activity.class).setup(); var descriptor = descriptor(activity.get())) {
             ResourceScope scope = scope(activity.get()); FakeBackend fake = new FakeBackend();
             ScopedResourceLoader loader = ScopedResourceLoader.openWithBackend(scope, fake);
@@ -151,18 +134,16 @@ public class ScopedResourceLoaderTest {
             loader.close(); assertEquals(2, fake.events.stream().filter("close:p1"::equals).count());
         }
     }
-    @Test public void closedScopeRejectsProviderBeforeAnyBackendIo() throws Exception {
-        try (var activity = Robolectric.buildActivity(Activity.class).setup(); var descriptor = descriptor(activity.get())) {
-            ResourceScope scope = scope(activity.get()); FakeBackend fake = new FakeBackend();
-            ScopedResourceLoader loader = ScopedResourceLoader.openWithBackend(scope, fake);
-            scope.close();
-            assertThrows(IllegalStateException.class, () -> loader.putApk("late", descriptor));
-            assertEquals(0, fake.sequence);
-            assertEquals(List.of("attach"), fake.events);
-            loader.close();
+    @Test public void foreignChangeAndAnotherThreadMutationAreRejectedWithoutBackendChanges() throws Exception {
+        try (var activity = Robolectric.buildActivity(Activity.class).setup()) {
+            ResourceScope scope = scope(activity.get());
+            ScopedResourceLoader loader = ScopedResourceLoader.openWithBackend(scope, new FakeBackend());
+            ResourceState.Token resources = scope.state().token(ResourceState.RESOURCES);
+            ResourceState.Token theme = scope.state().token(ResourceState.THEME);
+            loader.invalidateExternalChange();
+            assertFalse(scope.state().isCurrent(resources)); assertFalse(scope.state().isCurrent(theme));
+            loader.close(); scope.close();
         }
-    }
-    @Test public void mutationFromAnotherThreadIsRejectedWithoutChangingBackend() throws Exception {
         try (var activity = Robolectric.buildActivity(Activity.class).setup()) {
             ResourceScope scope = scope(activity.get()); FakeBackend fake = new FakeBackend();
             ScopedResourceLoader loader = ScopedResourceLoader.openWithBackend(scope, fake);
@@ -174,6 +155,17 @@ public class ScopedResourceLoaderTest {
             assertTrue(observed.get() instanceof IllegalStateException);
             assertEquals(List.of("attach"), fake.events);
             loader.close(); scope.close();
+        }
+    }
+    @Test public void closedScopeRejectsProviderBeforeAnyBackendIo() throws Exception {
+        try (var activity = Robolectric.buildActivity(Activity.class).setup(); var descriptor = descriptor(activity.get())) {
+            ResourceScope scope = scope(activity.get()); FakeBackend fake = new FakeBackend();
+            ScopedResourceLoader loader = ScopedResourceLoader.openWithBackend(scope, fake);
+            scope.close();
+            assertThrows(IllegalStateException.class, () -> loader.putApk("late", descriptor));
+            assertEquals(0, fake.sequence);
+            assertEquals(List.of("attach"), fake.events);
+            loader.close();
         }
     }
 }
