@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:label="Meguviz Plain" android:theme="@style/AppTheme" android:allowBackup="false">
+    <application android:label="Meguviz Plain" android:theme="@style/AppTheme" android:allowBackup="false" android:icon="@mipmap/ic_meguviz_android" android:roundIcon="@mipmap/ic_meguviz_android">
         <activity android:name=".PlainActivity" android:exported="true" android:resizeableActivity="true">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
