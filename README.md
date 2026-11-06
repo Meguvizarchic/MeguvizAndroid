@@ -1,4 +1,35 @@
+<div align="center">
+
+<img src="docs/brand/MeguvizAndroid.svg" width="96" height="96" alt="MeguvizAndroid">
+
 # MeguvizAndroid
+
+**Android 生命周期、窗口、资源和有界调度基础库**
+
+运行时 · 窗口 · 生命周期 · 资源加载
+
+<br>
+
+[![License](https://img.shields.io/badge/license-Apache--2.0-00AEEC?style=flat-square&labelColor=2d3a55)](LICENSE)
+[![Language](https://img.shields.io/badge/lang-Java-DEA584?style=flat-square&labelColor=2d3a55)](https://github.com/Meguvizarchic/MeguvizAndroid)
+[![Issues](https://img.shields.io/github/issues/Meguvizarchic/MeguvizAndroid?style=flat-square&labelColor=2d3a55)](https://github.com/Meguvizarchic/MeguvizAndroid/issues)
+
+[GitHub Maven 消费](#github-maven-消费) · [本地 Maven 消费](#本地-maven-消费) · [验证](#验证)
+
+</div>
+
+---
+
+<details>
+<summary><b>目录</b></summary>
+
+- [GitHub Maven 消费](#github-maven-消费)
+- [本地 Maven 消费](#本地-maven-消费)
+- [验证](#验证)
+
+</details>
+
+---
 
 Android 生命周期、窗口、资源和有界调度基础库。当前源码版本为 `1.0.0`。GitHub Release 提供本地 Maven 仓库格式的制品；Maven Central 的签名和发布将单独处理。
 
