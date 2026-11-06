@@ -15,8 +15,8 @@ android {
     sourceSets["debug"].java.srcDir("../plain/src/debug/java")
 }
 dependencies {
-    implementation("io.github.jichuo1.meguviz:meguviz-android-window:1.1.0")
-    debugImplementation("io.github.jichuo1.meguviz:meguviz-android-lifecycle:1.1.0")
+    implementation("io.github.jichuo1.meguviz:meguviz-android-window:1.2.0")
+    debugImplementation("io.github.jichuo1.meguviz:meguviz-android-lifecycle:1.2.0")
     debugImplementation("androidx.fragment:fragment:1.9.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

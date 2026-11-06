@@ -11,7 +11,7 @@ android {
     buildTypes { release { isMinifyEnabled = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt")) } }
 }
 dependencies {
-    implementation("io.github.jichuo1.meguviz:meguviz-android-lifecycle:1.1.0")
+    implementation("io.github.jichuo1.meguviz:meguviz-android-lifecycle:1.2.0")
     implementation("androidx.fragment:fragment:1.9.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

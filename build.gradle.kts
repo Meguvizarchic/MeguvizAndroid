@@ -4,7 +4,7 @@ plugins {
 }
 allprojects {
     group = "io.github.jichuo1.meguviz"
-    version = "1.1.0"
+    version = "1.2.0"
 }
 val beginHostVerification by tasks.registering(Exec::class) {
     commandLine("python", "scripts/verification.py", "start-host")

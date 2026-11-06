@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULES = ('android-runtime', 'android-window', 'android-lifecycle')
 TEST_MODULES = MODULES + ('android-resources-loader',)
 GROUP = 'io.github.jichuo1.meguviz'
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 FORBIDDEN = ('com.highcapable.betterandroid', 'com.highcapable.hikage', 'com.highcapable.kavaref',
              'io.github.libxposed', 'LumenCoacervationEngine')
 FORBIDDEN_API = FORBIDDEN + ('io.github.jichuo1.meguviz.android.testfixture', 'meguviz.ui.', 'meguviz.ref.', 'meguviz.dex.')

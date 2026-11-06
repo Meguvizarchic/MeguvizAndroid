@@ -34,7 +34,7 @@ google()
 mavenCentral()
 
 // 在消费者模块的 dependencies 中
-implementation("io.github.jichuo1.meguviz:meguviz-android-window:1.1.0")
+implementation("io.github.jichuo1.meguviz:meguviz-android-window:1.2.0")
 // 可选：meguviz-android-lifecycle 与 meguviz-android-resources-loader
 ```
 
