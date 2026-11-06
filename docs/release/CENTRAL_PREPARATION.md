@@ -2,7 +2,7 @@
 
 当前工程只配置本机 `Candidate` Maven 仓库，没有 Central 上传端点；本说明不代表已发布或批准上传。四个模块的 release publication 各包含 AAR、POM、Gradle metadata、sources JAR 和 `javadoc` classifier。`javadoc` JAR 是由**本次 release AAR 的 classes.jar**经 JDK `javap -public` 生成的 JVM 可见签名参考，附带 AAR SHA、类数和签名摘要；它不是完整 Kotlin KDoc 或行为说明，也可能包含 Kotlin `internal` 或合成的 JVM 可见成员。
 
-默认 host、GitHub Release 和本地候选构建不要求签名密钥。仅显式指定 `-Pmeguviz.centralPrepare=true` 才会使用 Gradle 内置 signing 插件为 publication 准备签名；`prepareCentralLocal` 在未显式启用时返回 BLOCKED，启用后仍要求非 SNAPSHOT 版本及有效签名配置。当前根构建默认是 `1.2.0`（`1.0.0` 已发布，不可变；`1.1.0` 未发布）；显式启用 Central 模式时仍须同时提供 `-Pmeguviz.releaseVersion=1.2.0` 等不可变版本。自 `1.1.0` 起 `android-runtime` 以 `compileSdkMinor = 2` 编译，但 AAR 元数据的最低编译版本保持 37.0（`aarMetadata.minCompileSdk`），API 37.2 类型只在 `MemoryBudgetApi37` 内、受运行时完整版本检查保护。已在隔离目录用 `1.0.0-rc.2` 实际生成四模块 POM 和 Gradle metadata，分别核对 API/runtime 变体的模块内版本；这些是元数据检查，不是签名或发布证明。签名配置通过安全的 Gradle/GPG 环境提供，不应写入仓库、命令行日志或测试回执；本工程脚本不读取、保存或打印凭据。
+默认 host、GitHub Release 和本地候选构建不要求签名密钥。仅显式指定 `-Pmeguviz.centralPrepare=true` 才会使用 Gradle 内置 signing 插件为 publication 准备签名；`prepareCentralLocal` 在未显式启用时返回 BLOCKED，启用后仍要求非 SNAPSHOT 版本及有效签名配置。当前根构建默认是 `1.2.0`（`1.0.0` 与 `1.1.0` 均已发布，不可变）；显式启用 Central 模式时仍须同时提供 `-Pmeguviz.releaseVersion=1.2.0` 等不可变版本。自 `1.1.0` 起 `android-runtime` 以 `compileSdkMinor = 2` 编译，但 AAR 元数据的最低编译版本保持 37.0（`aarMetadata.minCompileSdk`），API 37.2 类型只在 `MemoryBudgetApi37` 内、受运行时完整版本检查保护。已在隔离目录用 `1.0.0-rc.2` 实际生成四模块 POM 和 Gradle metadata，分别核对 API/runtime 变体的模块内版本；这些是元数据检查，不是签名或发布证明。签名配置通过安全的 Gradle/GPG 环境提供，不应写入仓库、命令行日志或测试回执；本工程脚本不读取、保存或打印凭据。
 
 在确认本机候选仓库、非 SNAPSHOT 版本及 JDK 路径后，可只读核验：
 
