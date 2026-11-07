@@ -4,7 +4,7 @@ import android.content.Context;
 import android.view.View;
 import android.view.Window;
 import io.github.jichuo1.meguviz.android.runtime.core.*;
-import io.github.jichuo1.meguviz.android.runtime.platform.ChoreographerDriver;
+import io.github.jichuo1.meguviz.android.runtime.platform.BudgetFrameDriver;
 import io.github.jichuo1.meguviz.android.runtime.platform.MainThreadDispatcher;
 import io.github.jichuo1.meguviz.android.runtime.resources.ResourceScope;
 import java.lang.ref.WeakReference;
@@ -46,7 +46,9 @@ public final class WindowSession implements AutoCloseable {
         MainThreadDispatcher owner = new MainThreadDispatcher();
         owner.checkOwner();
         ErrorSink errors = error -> android.util.Log.e("MeguvizAndroid", "Window operation failed", error);
-        FrameScheduler scheduler = new FrameScheduler(owner, new ChoreographerDriver(owner), errors, 64);
+        // Default to the deadline-aware driver: API 33+ reads the preferred frame timeline, older
+        // releases fall back to the single-argument Choreographer path inside BudgetFrameDriver.
+        FrameScheduler scheduler = new FrameScheduler(owner, new BudgetFrameDriver(owner, true), errors, 64);
         try { return new WindowSession(owner, scheduler, true, window, context, namespace, permission, errors); }
         catch (RuntimeException | Error failure) { scheduler.close(); throw failure; }
     }

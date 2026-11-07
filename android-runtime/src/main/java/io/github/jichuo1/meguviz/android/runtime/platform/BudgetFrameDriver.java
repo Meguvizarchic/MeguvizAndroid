@@ -7,7 +7,7 @@ import io.github.jichuo1.meguviz.android.runtime.core.FrameDriver;
 import io.github.jichuo1.meguviz.android.runtime.core.OwnerDispatcher;
 import java.util.Objects;
 
-/** Opt-in frame metadata on API 33+, with the normal single driver as fallback. */
+/** Deadline-aware frame metadata on API 33+, with the single-argument driver as fallback. */
 public final class BudgetFrameDriver implements FrameDriver {
     private final FrameDriver delegate;
 
@@ -32,6 +32,15 @@ public final class BudgetFrameDriver implements FrameDriver {
         return deadlineNanos > 0;
     }
 
+    /**
+     * True when the platform actually supplied an expected presentation time. The deadline and the
+     * presentation time are copied as a pair, so a non-positive presentation time means the timeline
+     * was unusable and the whole pair is reported as unknown.
+     */
+    static boolean isUsablePresentation(long presentationNanos) {
+        return presentationNanos > 0;
+    }
+
     @TargetApi(33)
     static final class VsyncDriver implements FrameDriver {
         interface Queue {
@@ -51,10 +60,21 @@ public final class BudgetFrameDriver implements FrameDriver {
                 Callback target = callback; callback = null;
                 if (target == null) return;
                 long frame = data.getFrameTimeNanos();
-                Choreographer.FrameTimeline timeline = data.getPreferredFrameTimeline();
-                long deadline = timeline.getDeadlineNanos();
-                if (!isUsableDeadline(deadline)) { target.onFrame(frame); return; }
-                target.onFrame(frame, deadline, timeline.getExpectedPresentationTimeNanos());
+                long deadline, presentation;
+                try {
+                    Choreographer.FrameTimeline timeline = data.getPreferredFrameTimeline();
+                    deadline = timeline.getDeadlineNanos();
+                    if (!isUsableDeadline(deadline)) { target.onFrame(frame); return; }
+                    presentation = timeline.getExpectedPresentationTimeNanos();
+                    if (!isUsablePresentation(presentation)) { target.onFrame(frame); return; }
+                } catch (RuntimeException failure) {
+                    // The timeline can be unavailable (for example after a SurfaceFlinger restart) or
+                    // no longer valid. Report the frame as unknown rather than letting a metadata
+                    // failure drop the frame or stall the scheduler on a derived zero budget.
+                    // Errors propagate, matching UiScheduler.apply/checkPending.
+                    target.onFrame(frame); return;
+                }
+                target.onFrame(frame, deadline, presentation);
             }
         }
 
