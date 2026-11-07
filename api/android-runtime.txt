@@ -74,9 +74,6 @@ public final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox
   public static io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Cancellation valueOf(java.lang.String);
 }
 Compiled from "BoundedMailbox.java"
-final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Item {
-}
-Compiled from "BoundedMailbox.java"
 public final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Outcome extends java.lang.Enum<io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Outcome> {
   public static final io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Outcome PENDING;
   public static final io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Outcome RUNNING;
@@ -102,9 +99,6 @@ public final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox
   public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Admission admission();
   public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$WorkHandle handle();
   public boolean accepted();
-}
-Compiled from "BoundedMailbox.java"
-final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Terminal {
 }
 Compiled from "BoundedMailbox.java"
 public final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$WorkHandle {

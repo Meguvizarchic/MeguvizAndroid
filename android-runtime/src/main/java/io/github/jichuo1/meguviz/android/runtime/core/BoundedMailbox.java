@@ -25,9 +25,13 @@ public final class BoundedMailbox implements AutoCloseable {
     private final int commandCapacity;
     /** Drain order of state slots; a slot appears at most once, marked by Slot.queued. */
     private final ArrayDeque<Slot> stateQueue = new ArrayDeque<>();
-    private final IdentityHashMap<Slot, Item> latest = new IdentityHashMap<>();
-    private final ArrayDeque<Item> commands = new ArrayDeque<>();
-    private final ArrayDeque<Item> extracted = new ArrayDeque<>();
+    /**
+     * Latest state work per slot. The value is the {@link WorkHandle} itself, which carries the
+     * slot/action/release payload; a separate item object per offer would only duplicate the handle.
+     */
+    private final IdentityHashMap<Slot, WorkHandle> latest = new IdentityHashMap<>();
+    private final ArrayDeque<WorkHandle> commands = new ArrayDeque<>();
+    private final ArrayDeque<WorkHandle> extracted = new ArrayDeque<>();
     private final FrameScheduler.FrameChannel channel;
     private final Registration registration;
     private Signal signal;
@@ -44,7 +48,7 @@ public final class BoundedMailbox implements AutoCloseable {
     Runnable afterExtract;
     Runnable beforeFinish;
     /** Reused per-frame extraction batch; package-private for contract tests. */
-    final ArrayList<Item> drainBatch = new ArrayList<>();
+    final ArrayList<WorkHandle> drainBatch = new ArrayList<>();
 
     public BoundedMailbox(LifecycleScope scope, FrameScheduler scheduler, ErrorSink sink,
                           int stateCapacity, int commandCapacity, int perFrameQuota) {
@@ -94,26 +98,27 @@ public final class BoundedMailbox implements AutoCloseable {
     private Submission offer(Slot slot, WorkToken token, Runnable callback, Runnable release) {
         Objects.requireNonNull(token); Objects.requireNonNull(callback); Objects.requireNonNull(release);
         if (token.scope != scope) return new Submission(Admission.UNSUPPORTED, null);
-        Terminal replaced = null;
+        WorkHandle replaced = null;
         Signal dispatch;
         Submission result;
         synchronized (lock) {
             if (closed || scope.admissionClosed()) return new Submission(Admission.REJECTED_CLOSED, null);
-            Item previous = slot == null ? null : latest.get(slot);
+            WorkHandle previous = slot == null ? null : latest.get(slot);
             if (slot == null ? pendingCommands >= commandCapacity : previous == null && latest.size() >= stateCapacity)
                 return new Submission(Admission.REJECTED_CAPACITY, null);
             if (previous != null) replaced = terminateLocked(previous, Outcome.SUPERSEDED, null, false);
-            Item item = new Item(slot, token, callback, release, ++sequence);
+            WorkHandle item = new WorkHandle(++sequence, this, slot, token, callback, release);
             if (slot == null) { commands.addLast(item); pendingCommands++; }
             else {
                 // A replacement inherits the queued slot position, so drain order never moves;
                 // only a first offer (or one after the previous item left the queue) appends.
-                if (previous == null || !previous.slot.queued) { stateQueue.addLast(slot); slot.queued = true; }
+                // The flag lives on the slot, not on the terminated previous handle.
+                if (previous == null || !slot.queued) { stateQueue.addLast(slot); slot.queued = true; }
                 latest.put(slot, item);
             }
             if (paused && slot == null) replaced = terminateLocked(item, Outcome.INACTIVE, null, true);
             dispatch = requestSignalLocked();
-            result = new Submission(previous == null ? Admission.ACCEPTED : Admission.REPLACED, item.handle);
+            result = new Submission(previous == null ? Admission.ACCEPTED : Admission.REPLACED, item);
         }
         Throwable failure = release(replaced);
         if (failure != null) failClosed(failure);
@@ -160,7 +165,7 @@ public final class BoundedMailbox implements AutoCloseable {
         // reuse and clear the list the outer loop is still walking.
         boolean wasDraining = draining;
         boolean reusing = !draining;
-        List<Item> batch = reusing ? drainBatch : new ArrayList<>(quota);
+        List<WorkHandle> batch = reusing ? drainBatch : new ArrayList<>(quota);
         if (reusing) batch.clear();
         draining = true;
         int drained;
@@ -168,7 +173,7 @@ public final class BoundedMailbox implements AutoCloseable {
             synchronized (lock) {
                 if (closed || paused) return 0;
                 while (batch.size() < quota && hasWorkLocked()) {
-                    Item item;
+                    WorkHandle item;
                     if (!commands.isEmpty() && (commandTurn || stateQueue.isEmpty())) item = commands.removeFirst();
                     else {
                         Slot slot = stateQueue.pollFirst();
@@ -181,7 +186,7 @@ public final class BoundedMailbox implements AutoCloseable {
             }
             try {
                 if (afterExtract != null) afterExtract.run();
-                for (Item item : batch) execute(item);
+                for (WorkHandle item : batch) execute(item);
             } finally {
                 if (beforeFinish != null) beforeFinish.run();
                 boolean again;
@@ -204,42 +209,47 @@ public final class BoundedMailbox implements AutoCloseable {
         return drained;
     }
 
-    private void execute(Item item) {
+    private void execute(WorkHandle item) {
         Runnable action;
-        Terminal terminal = null;
+        WorkHandle terminated = null;
         synchronized (lock) {
-            if (item.handle.outcome != Outcome.PENDING) return;
-            if (closed) terminal = terminateLocked(item, Outcome.CLOSED, null, true);
-            else if (!item.token.isCurrent()) terminal = terminateLocked(item, Outcome.STALE, null, true);
+            if (item.outcome != Outcome.PENDING) return;
+            if (closed) terminated = terminateLocked(item, Outcome.CLOSED, null, true);
+            else if (!item.token.isCurrent()) terminated = terminateLocked(item, Outcome.STALE, null, true);
             else if (paused && item.slot != null) {
                 extracted.remove(item);
                 if (latest.get(item.slot) == item) { stateQueue.addLast(item.slot); item.slot.queued = true; }
                 return;
             }
-            else if (paused || !scope.isActive()) terminal = terminateLocked(item, Outcome.INACTIVE, null, true);
+            else if (paused || !scope.isActive()) terminated = terminateLocked(item, Outcome.INACTIVE, null, true);
             else {
                 extracted.remove(item);
                 if (item.slot == null) pendingCommands--;
                 else if (latest.get(item.slot) == item) latest.remove(item.slot);
-                item.handle.outcome = Outcome.RUNNING;
+                item.outcome = Outcome.RUNNING;
             }
             action = item.action;
         }
-        if (terminal != null) {
-            Throwable failure = release(terminal);
+        if (terminated != null) {
+            Throwable failure = release(terminated);
             if (failure != null) failClosed(failure);
             return;
         }
         Throwable failure = null;
         try { action.run(); } catch (Throwable error) { failure = error; }
-        synchronized (lock) { terminal = terminateLocked(item, failure == null ? Outcome.COMPLETED : Outcome.FAILED, failure, true); }
-        Throwable releaseFailure = release(terminal);
+        synchronized (lock) { terminated = terminateLocked(item, failure == null ? Outcome.COMPLETED : Outcome.FAILED, failure, true); }
+        Throwable releaseFailure = release(terminated);
         failure = Failures.combine(failure, releaseFailure);
         if (failure != null) failClosed(failure);
     }
 
-    private Terminal terminateLocked(Item item, Outcome result, Throwable failure, boolean removeStatePosition) {
-        Outcome previous = item.handle.outcome;
+    /**
+     * Terminates one handle and returns it carrying its release callback, or null when the handle
+     * was already terminal. The handle is the queued item, so no per-termination wrapper is
+     * allocated and the release callback survives on the handle until {@link #release} runs it.
+     */
+    private WorkHandle terminateLocked(WorkHandle item, Outcome result, Throwable failure, boolean removeStatePosition) {
+        Outcome previous = item.outcome;
         if (previous != Outcome.PENDING && previous != Outcome.RUNNING) return null;
         if (previous == Outcome.PENDING) {
             removeQueued(extracted, item);
@@ -252,11 +262,10 @@ public final class BoundedMailbox implements AutoCloseable {
                 if (latest.get(item.slot) == item) latest.remove(item.slot);
             }
         }
-        item.handle.outcome = result; item.handle.failure = failure;
-        item.handle.mailbox = null; item.handle.item = null;
-        Terminal terminal = new Terminal(item.release, item.handle);
-        item.action = null; item.release = null; item.token = null;
-        return terminal;
+        item.outcome = result; item.failure = failure;
+        // Detach from the mailbox and drop the payload; release stays until release(handle) runs it.
+        item.mailbox = null; item.slot = null; item.action = null; item.token = null;
+        return item;
     }
 
     /**
@@ -273,23 +282,26 @@ public final class BoundedMailbox implements AutoCloseable {
     /** Test-only seam invoked between the idle decision and the wake cancellation. */
     Runnable idleWakeProbe;
 
-    private Throwable release(Terminal terminal) {
-        if (terminal == null) return null;
-        try { terminal.callback.run(); return null; }
+    private Throwable release(WorkHandle handle) {
+        if (handle == null) return null;
+        Runnable callback = handle.release;
+        handle.release = null;
+        if (callback == null) return null;
+        try { callback.run(); return null; }
         catch (Throwable failure) {
-            terminal.handle.failure = Failures.combine(terminal.handle.failure, failure); terminal.handle.outcome = Outcome.FAILED;
+            handle.failure = Failures.combine(handle.failure, failure); handle.outcome = Outcome.FAILED;
             return failure;
         }
     }
 
-    private Cancellation cancel(Item item) {
-        Terminal terminal;
+    private Cancellation cancel(WorkHandle item) {
+        WorkHandle terminated;
         synchronized (lock) {
-            if (item.handle.outcome == Outcome.RUNNING) return Cancellation.ALREADY_RUNNING;
-            if (item.handle.outcome != Outcome.PENDING) return Cancellation.ALREADY_TERMINAL;
-            terminal = terminateLocked(item, Outcome.CANCELLED, null, true);
+            if (item.outcome == Outcome.RUNNING) return Cancellation.ALREADY_RUNNING;
+            if (item.outcome != Outcome.PENDING) return Cancellation.ALREADY_TERMINAL;
+            terminated = terminateLocked(item, Outcome.CANCELLED, null, true);
         }
-        Throwable failure = release(terminal);
+        Throwable failure = release(terminated);
         if (failure != null) failClosed(failure);
         cancelIdleWake();
         return Cancellation.CANCELLED;
@@ -318,7 +330,7 @@ public final class BoundedMailbox implements AutoCloseable {
         owner.checkOwner();
         Signal wake = null;
         Signal dispatch = null;
-        List<Terminal> cancelled = new ArrayList<>();
+        List<WorkHandle> cancelled = new ArrayList<>();
         synchronized (lock) {
             if (closed) return;
             if (paused == value) return;
@@ -326,8 +338,8 @@ public final class BoundedMailbox implements AutoCloseable {
             if (paused) {
                 wake = signalPending ? signal : null;
                 signalPending = false;
-                for (Item item : new ArrayList<>(commands)) cancelled.add(terminateLocked(item, Outcome.INACTIVE, null, true));
-                for (Item item : new ArrayList<>(extracted)) {
+                for (WorkHandle item : new ArrayList<>(commands)) cancelled.add(terminateLocked(item, Outcome.INACTIVE, null, true));
+                for (WorkHandle item : new ArrayList<>(extracted)) {
                     if (item.slot == null) cancelled.add(terminateLocked(item, Outcome.INACTIVE, null, true));
                 }
             } else dispatch = requestSignalLocked();
@@ -351,9 +363,9 @@ public final class BoundedMailbox implements AutoCloseable {
         }
     }
 
-    private Throwable releaseAll(List<Terminal> terminals) {
+    private Throwable releaseAll(List<WorkHandle> terminals) {
         Throwable first = null;
-        for (Terminal terminal : terminals) {
+        for (WorkHandle terminal : terminals) {
             Throwable failure = release(terminal);
             if (failure != null) {
                 first = Failures.combine(first, failure);
@@ -371,20 +383,20 @@ public final class BoundedMailbox implements AutoCloseable {
     private void terminateAll(Outcome outcome, Throwable reason) {
         ErrorSink sink = failures.sink();
         Signal wake;
-        List<Terminal> terminals = new ArrayList<>();
+        List<WorkHandle> terminals = new ArrayList<>();
         synchronized (lock) {
             wake = signalPending ? signal : null; signalPending = false;
             closed = true;
             // Preserve the deterministic drain order for the release callbacks instead of the
             // IdentityHashMap iteration order of latest.values().
-            LinkedHashSet<Item> all = new LinkedHashSet<>();
+            LinkedHashSet<WorkHandle> all = new LinkedHashSet<>();
             for (Slot slot : stateQueue) {
-                Item queued = latest.get(slot);
+                WorkHandle queued = latest.get(slot);
                 if (queued != null) all.add(queued);
             }
             all.addAll(commands); all.addAll(extracted);
             // The whole queue is cleared below, so per-item queue removal would only add O(n^2).
-            for (Item item : all) terminals.add(terminateLocked(item, outcome, reason, false));
+            for (WorkHandle item : all) terminals.add(terminateLocked(item, outcome, reason, false));
             for (Slot slot : stateQueue) slot.queued = false;
             stateQueue.clear(); latest.clear(); commands.clear(); extracted.clear(); pendingCommands = 0;
         }
@@ -451,38 +463,33 @@ public final class BoundedMailbox implements AutoCloseable {
         public WorkHandle handle() { return handle; }
         public boolean accepted() { return handle != null; }
     }
+    /**
+     * One queued work item and its public handle. The handle is the item: it carries the slot,
+     * token, action and release payload while queued, so a separate per-offer item object is not
+     * allocated. Payload fields are private and are cleared on termination.
+     */
     public static final class WorkHandle {
         private final long sequence;
         private volatile Outcome outcome = Outcome.PENDING;
         private volatile Throwable failure;
         private volatile BoundedMailbox mailbox;
-        private volatile Item item;
-        private WorkHandle(long sequence, BoundedMailbox mailbox, Item item) {
-            this.sequence = sequence; this.mailbox = mailbox; this.item = item;
+        private Slot slot;
+        private WorkToken token;
+        private Runnable action;
+        /** Release callback carried from termination until it runs; never exposed to callers. */
+        private Runnable release;
+        private WorkHandle(long sequence, BoundedMailbox mailbox, Slot slot, WorkToken token,
+                          Runnable action, Runnable release) {
+            this.sequence = sequence; this.mailbox = mailbox;
+            this.slot = slot; this.token = token; this.action = action; this.release = release;
         }
         public long sequence() { return sequence; }
         public Outcome outcome() { return outcome; }
         public Throwable failure() { return failure; }
         public Cancellation cancel() {
-            BoundedMailbox current = mailbox; Item pending = item;
-            if (current == null || pending == null) return Cancellation.ALREADY_TERMINAL;
-            return current.cancel(pending);
+            BoundedMailbox current = mailbox;
+            if (current == null) return Cancellation.ALREADY_TERMINAL;
+            return current.cancel(this);
         }
-    }
-    private final class Item {
-        final Slot slot;
-        final WorkHandle handle;
-        WorkToken token;
-        Runnable action;
-        Runnable release;
-        Item(Slot slot, WorkToken token, Runnable action, Runnable release, long sequence) {
-            this.slot = slot; this.token = token; this.action = action; this.release = release;
-            handle = new WorkHandle(sequence, BoundedMailbox.this, this);
-        }
-    }
-    private static final class Terminal {
-        final Runnable callback;
-        final WorkHandle handle;
-        Terminal(Runnable callback, WorkHandle handle) { this.callback = callback; this.handle = handle; }
     }
 }

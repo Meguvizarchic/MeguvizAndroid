@@ -3,6 +3,31 @@
 本文件记录 2026-11-05 对 `android-runtime` 邮箱提交/终止路径的三处分配改动。只描述已实现内容与
 已验证证据；不承诺零分配，不声称 ART/真机收益。
 
+## 2026-11-07（第五轮）：WorkHandle 即队列项（host 验证）
+
+| 改动 | 位置 | 说明 |
+| --- | --- | --- |
+| `WorkHandle` 合并 `Item`/`Terminal` | `BoundedMailbox.java` | `WorkHandle` 直接携带 `slot`/`token`/`action`/`release`，本身它就是 `latest`/`commands`/`extracted` 的队列元素；删除了原先每 offer 一个的 `Item` 与每终止一个的 `Terminal` |
+| `terminateLocked` 返回 `WorkHandle` | 同上 | 终止时把 `slot`/`token`/`action` 置空、保留 `release` 直到 `release(handle)` 执行；`WorkHandle.cancel()` 改为 `cancel(this)`，不再回查 `Item` |
+
+公开 ABI 不变：`api/android-runtime.txt` 只移除包私有的 `Item`/`Terminal` 空类段，没有 public 描述符变化。
+
+ABBA 交错（JDK 21，`FrameBufferBenchmark`，8 邮箱 × 16 slot × 20000 帧）：
+
+| 配置 | 改前 | 改后 |
+| --- | --- | --- |
+| 8 邮箱 | 3880 B/帧 | 3112 B/帧（-19.8%） |
+| 32 邮箱 | 16944 B/帧 | 12336 B/帧（-27.2%） |
+
+改前的 3880 B/帧与本文件「第二轮」记录的稳态一致，可交叉核对。`executed_ops` 两侧一致（功能等价）。
+隔离探针另测得单次 offer 的逃逸分配 116 → 73 B。
+
+验证：`:android-runtime:testDebugUnitTest`（77 项）与 `:android-window:testDebugUnitTest`（91 项）在 JDK 21 下全绿；
+新增 `MailboxHandleItemContractTest` 4 项，锁死「返回的 handle 就是队列项本身」「release 恰好执行一次」
+「终止后 `slot`/`token`/`action`/`release`/`mailbox` 全部置空」。
+
+残余：仍为 host 数据，不含 ART/真机；仓库官方 `verifyHost` 需 JDK 25/27，本轮未运行。
+
 ## 改动内容
 
 | 文件 | 改动 |
