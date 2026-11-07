@@ -11,6 +11,17 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = {27, 37})
 public class BudgetFrameDriverPlatformTest {
+    @Test public void nonPositiveDeadlineIsReportedAsUnknownSoConsumersKeepTheirBudget() {
+        // A non-positive deadline means the platform could not supply one. Passing it through would
+        // let a consumer derive a zero work budget and stall the frame, so the driver falls back to
+        // the advisory one-argument callback (null deadline) instead.
+        assertFalse(BudgetFrameDriver.isUsableDeadline(0L));
+        assertFalse(BudgetFrameDriver.isUsableDeadline(-1L));
+        assertFalse(BudgetFrameDriver.isUsableDeadline(Long.MIN_VALUE));
+        assertTrue(BudgetFrameDriver.isUsableDeadline(1L));
+        assertTrue(BudgetFrameDriver.isUsableDeadline(System.nanoTime()));
+    }
+
     @Test public void disabledAndEnabledDriversCanCancelAndReleaseOwnership() {
         OwnerDispatcher owner = new OwnerDispatcher() {
             @Override public boolean isOwnerThread() { return true; }

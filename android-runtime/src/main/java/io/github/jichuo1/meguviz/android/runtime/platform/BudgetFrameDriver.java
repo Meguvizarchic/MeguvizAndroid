@@ -19,6 +19,19 @@ public final class BudgetFrameDriver implements FrameDriver {
     @Override public boolean request(Callback callback) { return delegate.request(callback); }
     @Override public void remove(Callback callback) { delegate.remove(callback); }
 
+    /**
+     * True when the platform actually supplied a deadline.
+     *
+     * <p>A non-positive value means the timeline could not provide one (for example after a
+     * SurfaceFlinger restart). Reporting it as "unknown" keeps the consumer on its fixed work
+     * budget; passing it through would let consumers derive a zero budget and stall the frame.
+     * This mirrors {@code ChoreographerFrameDriver.VsyncDriver} in MeguvizUI, which applies the
+     * same test before copying the deadline into its frame budget.
+     */
+    static boolean isUsableDeadline(long deadlineNanos) {
+        return deadlineNanos > 0;
+    }
+
     @TargetApi(33)
     static final class VsyncDriver implements FrameDriver {
         interface Queue {
@@ -40,8 +53,8 @@ public final class BudgetFrameDriver implements FrameDriver {
                 long frame = data.getFrameTimeNanos();
                 Choreographer.FrameTimeline timeline = data.getPreferredFrameTimeline();
                 long deadline = timeline.getDeadlineNanos();
-                long presentation = timeline.getExpectedPresentationTimeNanos();
-                target.onFrame(frame, deadline, presentation);
+                if (!isUsableDeadline(deadline)) { target.onFrame(frame); return; }
+                target.onFrame(frame, deadline, timeline.getExpectedPresentationTimeNanos());
             }
         }
 
