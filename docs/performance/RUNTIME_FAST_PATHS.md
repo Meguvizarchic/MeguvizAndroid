@@ -107,6 +107,39 @@ foreach ($p in 1..5) {
 - 后续候选（未实施）：`BoundedMailbox` 双映射（`states`/`latest`）职责复核、UI 侧 `UiScheduler`
   组轮转 O(n²) 与 Batch 分配（由 UI 负责人实施）。
 
+## 2026-11-07：deadline 上报加固与帧预算接线缺口（host 验证）
+
+### 已实施：非正 deadline 当作未知上报
+
+`BudgetFrameDriver.VsyncDriver` 原先把 `timeline.getDeadlineNanos()` 原样传给回调。非正数表示平台
+拿不到 deadline（例如 SurfaceFlinger 重启后），下游（`UiScheduler.drain` 的
+`min(maxFrameWorkNanos, deadline - started - 1ms)`）会据此推出 0 工作预算并卡住该帧。现在非正
+deadline 改走单参数回调（下游收到 `null`，保持固定预算），与 MeguvizUI 的
+`ChoreographerFrameDriver.VsyncDriver` 的 `takeIf { it > 0 }` 对齐。校验抽成包级
+`isUsableDeadline(long)`，测试覆盖 `0 / -1 / Long.MIN_VALUE` 为假、`1` 与当前纳秒时间为真。
+
+验证：`:android-runtime:testDebugUnitTest` + `:android-window:testDebugUnitTest` 170 项通过；
+lint 0 error。真机行为未测。
+
+### 调研发现（2026-11-07，未实施）
+
+用 Exa 调研 Android 17 DeliQueue、Choreographer 同帧批处理、JCTools/Agrona/Disruptor、
+coalescing/背压、FrameMetrics/JankStats 后，可落地与不适用的结论如下（完整报告见会话研究副本）：
+
+- **默认集成拿不到 deadline**：`WindowSession.open(...)` 用 `new ChoreographerDriver(owner)`，
+  而 `BudgetFrameDriver` 在测试与基准之外没有生产调用点。也就是说 `UiScheduler` 的 deadline
+  感知预算在默认 Android 桥路径上永远不会生效（`FrameBudget.estimated` 恒为 true）。是否改成
+  默认需要设备行为门禁，本轮未改。
+- **JCTools/Agrona/Disruptor 不适用于 `BoundedMailbox`**：它是 owner 独占 + 同槽合并 + 复杂
+  状态机，无锁队列的直接移植收益为负。可借鉴的是 DeliQueue 的「锁内不做 O(n) 移除」——
+  `BoundedMailbox.cancel()`/supersede 会在 producer 线程持锁做 `ArrayDeque.remove(Object)`，
+  与 DeliQueue 要解决的 priority inversion 同构；`removeQueued` 已有 head/tail 快路径，
+  中段移除的 O(n) 仍在锁内。
+- `MainThreadDispatcher` 保持同步 `Handler` 是有意设计（类注释明确「不绕过 traversal 屏障」），
+  不改。
+- `ChoreographerDriver` 每请求一个 `FrameCallback`，与 `FrameScheduler` 单 pending 的契约一致，
+  不存在重复请求 vsync。
+
 ## 环境事实
 
 - 复现环境 JDK：Microsoft 17.0.20、Gradle 托管 Adoptium 21.0.7；未安装 JDK 25/27。
