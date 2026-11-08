@@ -50,6 +50,8 @@ public final class BudgetFrameDriver implements FrameDriver {
                 pending = null;
                 Callback target = callback; callback = null;
                 if (target == null) return;
+                // 0 is the "unknown frame time" sentinel; it is only observable when even the frame
+                // time read fails, which on current platforms it does not.
                 long frame = 0L;
                 long deadline, presentation;
                 try {
