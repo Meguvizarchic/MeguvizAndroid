@@ -152,6 +152,15 @@ coalescing/背压、FrameMetrics/JankStats 后，可落地与不适用的结论�
 
 残余风险：该改动让**默认路径**从「无 deadline」变成「有 deadline」——常规刷新率下预算仍被 clamp 到 2ms 不变，late frame 预算收缩是预期；但 `postVsyncCallback` 的真机兼容性与帧节奏未测（本机无 instrumentation 设备）。对抗复核（`34-adversarial-round3.md`）另指出：若 `postVsyncCallback` 在某些设备上不可用，`WindowSession.open` 会直接失败，需真机确认。
 
+## 2026-11-08（R5 复核）：tombstone 改造无必要，已回退
+
+本轮按 DeliQueue 教训评估「`BoundedMailbox` 锁内不做 O(n) 移除」（R5），结论是**不需要改**，尝试已回退：
+
+- 核实 `HEAD` 的三条队列已经全是**侵入式双向链表**（`commands`/`extracted` 是 `HandleQueue`，`stateQueue` 是 `SlotQueue`），`cancel()`/supersede/pause/close 的摘链都是 O(1)；`ArrayDeque.remove(Object)` 的线性路径在 **2026-11-07 的 `b9b82eb`（WorkHandle 即队列项）** 就已经消除。
+- 该轮调研的「现状 O(n) 路径」表描述的是 11-07 之前的旧实现，基线判断有误。
+- 尝试把 `extracted` 改成「批次墓碑」（不再逐项摘链、最外层 drain 末尾整体清空）并给 `HandleQueue.remove` 加 no-op 防护，实测 **offer 路径分配 +256 B/帧（+8.2%）**，却没有换来可证明的收益，因此整体回退。
+- 真正值得留意的成本是**持锁执行**本身（producer 阻塞与 priority inversion），而不是移除复杂度——`MAILBOX_ALLOCATION.md` 已记录 1024 容量 + 逆序密集取消约 2.5× 的实测，那是后续若要做队列拓扑改造时的基线。
+
 ## 环境事实
 
 - 复现环境 JDK：Microsoft 17.0.20、Gradle 托管 Adoptium 21.0.7；未安装 JDK 25/27。
