@@ -68,6 +68,30 @@ class MailboxExtensionsTest {
         assertFalse("never" in ran)
     }
 
+    /**
+     * `block` is crossinline, so a non-local `return` (which would skip the submit and strand the
+     * staged offers for the next batch) does not compile. The supported way out is a labeled
+     * return, which leaves the block and submits what was staged so far.
+     */
+    @Test fun submitBatchLabeledReturnSubmitsWhatWasStagedAndLeavesNothingBehind() {
+        val ran = mutableListOf<String>()
+        val offers = box.offers()
+        val early = true
+        val accepted = offers.submitBatch {
+            command(token) { ran += "first" }
+            if (early) return@submitBatch
+            command(token) { ran += "skipped" }
+        }
+        assertEquals(1, accepted)
+        assertEquals(1, offers.size())
+
+        val next = offers.submitBatch { command(token) { ran += "second" } }
+        assertEquals("the previous batch must not leak into the next one", 1, next)
+        assertEquals(1, offers.size())
+        owner.drain()
+        assertEquals(listOf("first", "second"), ran)
+    }
+
     @Test fun submitBatchIsInlinedWithoutAFunctionObject() {
         // Bytecode proof, read from the compiled probe below: the call site references neither the
         // extension function nor a Kotlin function type, so no block object is created or invoked.

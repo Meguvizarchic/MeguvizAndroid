@@ -18,12 +18,16 @@ import io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox
  * nothing beyond the Runnables the staged offers need anyway. If [block] throws, nothing is
  * submitted and the partly staged batch is cleared.
  *
+ * [block] is `crossinline`: a non-local `return` out of it would skip the submit and leave the
+ * staged offers in the buffer for the next batch to pick up, so the compiler rejects it. To stop
+ * staging early write `return@submitBatch`; what was staged so far is then submitted.
+ *
  * Kotlin only. From Java the extension is visible as a static method taking a `Function1`, which
  * would allocate a function object per call; stage offers with `offers.state(...)` /
  * `offers.command(...)` and call `offers.submit()` directly instead. That path has identical
  * admission and release semantics and needs no wrapper object.
  */
-inline fun BoundedMailbox.Offers.submitBatch(block: BoundedMailbox.Offers.() -> Unit): Int {
+inline fun BoundedMailbox.Offers.submitBatch(crossinline block: BoundedMailbox.Offers.() -> Unit): Int {
     try {
         block()
     } catch (failure: Throwable) {

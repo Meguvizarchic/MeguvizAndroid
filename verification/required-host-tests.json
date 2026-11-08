@@ -289,10 +289,11 @@
       "io.github.jichuo1.meguviz.android.extensions.MailboxExtensionsTest": {
         "methods": [
           "submitBatchStagesInOrderAndClearsWhenTheBlockThrows",
+          "submitBatchLabeledReturnSubmitsWhatWasStagedAndLeavesNothingBehind",
           "submitBatchIsInlinedWithoutAFunctionObject"
         ],
         "sdks": [],
-        "expected_cases": 2,
+        "expected_cases": 3,
         "source": "android-window/src/test/kotlin/io/github/jichuo1/meguviz/android/extensions/MailboxExtensionsTest.kt"
       },
       "io.github.jichuo1.meguviz.android.testfixture.WindowCompatibilityGoldenTest": {
