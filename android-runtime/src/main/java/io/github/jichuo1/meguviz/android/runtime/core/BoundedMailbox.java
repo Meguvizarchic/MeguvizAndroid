@@ -1,6 +1,7 @@
 package io.github.jichuo1.meguviz.android.runtime.core;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -74,7 +75,7 @@ public final class BoundedMailbox implements AutoCloseable {
 
     public Slot newSlot() { owner.checkOwner(); synchronized (lock) { if (closed) throw new IllegalStateException("Mailbox closed"); } return new Slot(identity); }
     public Submission offerState(Slot slot, WorkToken token, Runnable callback, Runnable release) {
-        if (slot == null || slot.mailboxIdentity != identity) return new Submission(Admission.UNSUPPORTED, null);
+        if (slot == null || slot.mailboxIdentity != identity) return UNSUPPORTED;
         return offer(slot, token, callback, release);
     }
     /** State offer without a caller-owned cleanup: admission, coalescing and token checks are identical. */
@@ -99,35 +100,261 @@ public final class BoundedMailbox implements AutoCloseable {
         return offerBatch(token, callbacks, NOOP_RELEASE);
     }
 
+    /**
+     * Rejections carry no handle and no mutable state, so one immutable instance per admission is
+     * shared: a producer spinning against backpressure or a closed mailbox allocates nothing.
+     */
+    private static final Submission REJECTED_CAPACITY = new Submission(Admission.REJECTED_CAPACITY, null);
+    private static final Submission REJECTED_CLOSED = new Submission(Admission.REJECTED_CLOSED, null);
+    private static final Submission UNSUPPORTED = new Submission(Admission.UNSUPPORTED, null);
+
+    private static Submission rejection(Admission admission) {
+        switch (admission) {
+            case REJECTED_CAPACITY: return REJECTED_CAPACITY;
+            case REJECTED_CLOSED: return REJECTED_CLOSED;
+            default: return UNSUPPORTED;
+        }
+    }
+
+    /*
+     * Out-parameters of admitLocked. They are written and read only while holding lock and are
+     * cleared before the lock is released, so they never retain a handle or a release closure.
+     */
+    private WorkHandle admittedHandle;
+    private WorkHandle admittedReplaced;
+    private Signal admittedDispatch;
+
     private Submission offer(Slot slot, WorkToken token, Runnable callback, Runnable release) {
         Objects.requireNonNull(token); Objects.requireNonNull(callback); Objects.requireNonNull(release);
-        if (token.scope != scope) return new Submission(Admission.UNSUPPORTED, null);
-        WorkHandle replaced = null;
+        if (token.scope != scope) return UNSUPPORTED;
+        Admission admission;
+        WorkHandle handle;
+        WorkHandle replaced;
         Signal dispatch;
-        Submission result;
         synchronized (lock) {
-            if (closed || scope.admissionClosed()) return new Submission(Admission.REJECTED_CLOSED, null);
-            WorkHandle previous = slot == null ? null : latest.get(slot);
-            if (slot == null ? pendingCommands >= commandCapacity : previous == null && latest.size() >= stateCapacity)
-                return new Submission(Admission.REJECTED_CAPACITY, null);
-            if (previous != null) replaced = terminateLocked(previous, Outcome.SUPERSEDED, null, false);
-            WorkHandle item = new WorkHandle(++sequence, this, slot, token, callback, release);
-            if (slot == null) { commands.addLast(item); pendingCommands++; }
-            else {
-                // A replacement inherits the queued slot position, so drain order never moves;
-                // only a first offer (or one after the previous item left the queue) appends.
-                // The flag lives on the slot, not on the terminated previous handle.
-                if (previous == null || !slot.queued) { stateQueue.addLast(slot); slot.queued = true; }
-                latest.put(slot, item);
-            }
-            if (paused && slot == null) replaced = terminateLocked(item, Outcome.INACTIVE, null, true);
-            dispatch = requestSignalLocked();
-            result = new Submission(previous == null ? Admission.ACCEPTED : Admission.REPLACED, item);
+            admission = admitLocked(slot, token, callback, release);
+            handle = admittedHandle; replaced = admittedReplaced; dispatch = admittedDispatch;
+            admittedHandle = null; admittedReplaced = null; admittedDispatch = null;
         }
+        if (handle == null) return rejection(admission);
         Throwable failure = release(replaced);
         if (failure != null) failClosed(failure);
         post(dispatch);
-        return result;
+        return new Submission(admission, handle);
+    }
+
+    /**
+     * The single admission step shared by {@link #offer} and {@link Offers#submit()}, so the batched
+     * path cannot drift from the per-item one. On acceptance it leaves the new handle, the handle it
+     * terminated (superseded state or an inactive command, still carrying its release) and the
+     * wakeup to post in the out-parameters; on rejection it leaves them null and changes nothing.
+     */
+    private Admission admitLocked(Slot slot, WorkToken token, Runnable callback, Runnable release) {
+        if (closed || scope.admissionClosed()) return Admission.REJECTED_CLOSED;
+        WorkHandle previous = slot == null ? null : latest.get(slot);
+        if (slot == null ? pendingCommands >= commandCapacity : previous == null && latest.size() >= stateCapacity)
+            return Admission.REJECTED_CAPACITY;
+        WorkHandle replaced = null;
+        if (previous != null) replaced = terminateLocked(previous, Outcome.SUPERSEDED, null, false);
+        WorkHandle item = new WorkHandle(++sequence, this, slot, token, callback, release);
+        if (slot == null) { commands.addLast(item); pendingCommands++; }
+        else {
+            // A replacement inherits the queued slot position, so drain order never moves;
+            // only a first offer (or one after the previous item left the queue) appends.
+            // The flag lives on the slot, not on the terminated previous handle.
+            if (previous == null || !slot.queued) { stateQueue.addLast(slot); slot.queued = true; }
+            latest.put(slot, item);
+        }
+        if (paused && slot == null) replaced = terminateLocked(item, Outcome.INACTIVE, null, true);
+        admittedHandle = item; admittedReplaced = replaced; admittedDispatch = requestSignalLocked();
+        return previous == null ? Admission.ACCEPTED : Admission.REPLACED;
+    }
+
+    /**
+     * Creates a staging buffer for admitting several offers at once. The buffer is confined to the
+     * calling thread and is meant to be kept and reused by one producer; see {@link Offers}.
+     */
+    public Offers offers() { return new Offers(this, 8); }
+
+    /**
+     * A producer-confined, reusable batch of state and command offers.
+     *
+     * <p>{@link #submit()} admits the staged offers in staging order with exactly the results of
+     * calling {@code offerState}/{@code offerCommand} for each of them, in that order, on the calling
+     * thread: the same admissions, sequence numbers, coalescing, queue positions, capacity and close
+     * rejections, release callbacks (same order, same thread), and at most the one wakeup the first
+     * admitted offer would have posted. The difference is that other producers cannot interleave:
+     * the offers are admitted under one lock acquisition, which is left only where the per-item path
+     * runs caller code (a caller-supplied release of a superseded state or of a command offered while
+     * paused) and, on the owner thread, where the inline wakeup requests the frame. That code then
+     * runs at the same point in the sequence and never under the mailbox lock; only there can another
+     * producer's offers fall between two offers of the batch. Results are read with
+     * {@link #admission(int)} and {@link #handle(int)}; no {@link Submission} is allocated per offer.</p>
+     *
+     * <p>Arguments the single offer would reject with an exception are rejected when staged, so a
+     * bad argument never leaves half a batch admitted. A batch is not thread-safe and throws if used
+     * from a thread other than the one that created it. Staging after {@code submit()} starts a new
+     * batch and discards the previous results.</p>
+     */
+    public static final class Offers {
+        private final BoundedMailbox mailbox;
+        private final Thread producer = Thread.currentThread();
+        private Slot[] slots;
+        private boolean[] states;
+        private WorkToken[] tokens;
+        private Runnable[] callbacks;
+        private Runnable[] releases;
+        private Admission[] admissions;
+        private WorkHandle[] handles;
+        private int size;
+        private boolean submitted;
+
+        private Offers(BoundedMailbox mailbox, int capacity) {
+            this.mailbox = mailbox;
+            slots = new Slot[capacity]; states = new boolean[capacity]; tokens = new WorkToken[capacity];
+            callbacks = new Runnable[capacity]; releases = new Runnable[capacity];
+            admissions = new Admission[capacity]; handles = new WorkHandle[capacity];
+        }
+
+        /** Stages {@code offerState(slot, token, callback)}. */
+        public Offers state(Slot slot, WorkToken token, Runnable callback) {
+            return state(slot, token, callback, NOOP_RELEASE);
+        }
+
+        /** Stages {@code offerState(slot, token, callback, release)}. */
+        public Offers state(Slot slot, WorkToken token, Runnable callback, Runnable release) {
+            // offerState answers a null or foreign slot with UNSUPPORTED before looking at the rest.
+            if (slot != null && slot.mailboxIdentity == mailbox.identity) {
+                Objects.requireNonNull(token); Objects.requireNonNull(callback); Objects.requireNonNull(release);
+            }
+            stage(true, slot, token, callback, release);
+            return this;
+        }
+
+        /** Stages {@code offerCommand(token, callback)}. */
+        public Offers command(WorkToken token, Runnable callback) {
+            return command(token, callback, NOOP_RELEASE);
+        }
+
+        /** Stages {@code offerCommand(token, callback, release)}. */
+        public Offers command(WorkToken token, Runnable callback, Runnable release) {
+            Objects.requireNonNull(token); Objects.requireNonNull(callback); Objects.requireNonNull(release);
+            stage(false, null, token, callback, release);
+            return this;
+        }
+
+        /** Number of offers in the current batch. */
+        public int size() { checkProducer(); return size; }
+
+        /** Drops the current batch and its results without admitting anything. */
+        public void clear() { checkProducer(); reset(); }
+
+        /**
+         * Admits the staged offers; returns how many were accepted or replaced. A batch is submitted
+         * at most once. If a fatal error escapes (as it would from the per-item offer), the offers
+         * after it were not offered and report a null admission.
+         */
+        public int submit() {
+            checkProducer();
+            if (submitted) throw new IllegalStateException("Batch already submitted");
+            submitted = true;
+            try { mailbox.admitAll(this); }
+            finally {
+                // Drop the payload; the handles keep what the mailbox needs.
+                Arrays.fill(slots, 0, size, null); Arrays.fill(tokens, 0, size, null);
+                Arrays.fill(callbacks, 0, size, null); Arrays.fill(releases, 0, size, null);
+            }
+            int accepted = 0;
+            for (int index = 0; index < size; index++) if (handles[index] != null) accepted++;
+            return accepted;
+        }
+
+        /** Admission of the offer at {@code index} in the submitted batch. */
+        public Admission admission(int index) { return result(index, admissions)[index]; }
+
+        /** Handle of the offer at {@code index}, or null when it was not admitted. */
+        public WorkHandle handle(int index) { return result(index, handles)[index]; }
+
+        private <T> T[] result(int index, T[] values) {
+            checkProducer();
+            if (!submitted) throw new IllegalStateException("Batch not submitted");
+            if (index < 0 || index >= size) throw new IndexOutOfBoundsException("Index " + index + " out of bounds for length " + size);
+            return values;
+        }
+
+        private void stage(boolean state, Slot slot, WorkToken token, Runnable callback, Runnable release) {
+            checkProducer();
+            if (submitted) reset();
+            if (size == slots.length) grow();
+            states[size] = state; slots[size] = slot; tokens[size] = token;
+            callbacks[size] = callback; releases[size] = release;
+            size++;
+        }
+
+        private void reset() {
+            Arrays.fill(slots, 0, size, null); Arrays.fill(tokens, 0, size, null);
+            Arrays.fill(callbacks, 0, size, null); Arrays.fill(releases, 0, size, null);
+            Arrays.fill(admissions, 0, size, null); Arrays.fill(handles, 0, size, null);
+            size = 0; submitted = false;
+        }
+
+        private void grow() {
+            int capacity = slots.length * 2;
+            slots = Arrays.copyOf(slots, capacity); states = Arrays.copyOf(states, capacity);
+            tokens = Arrays.copyOf(tokens, capacity); callbacks = Arrays.copyOf(callbacks, capacity);
+            releases = Arrays.copyOf(releases, capacity); admissions = Arrays.copyOf(admissions, capacity);
+            handles = Arrays.copyOf(handles, capacity);
+        }
+
+        private void checkProducer() {
+            if (Thread.currentThread() != producer) throw new IllegalStateException("Offers batch used outside its producer thread");
+        }
+    }
+
+    /**
+     * Batched admission. Each offer goes through {@link #admitLocked} exactly as {@link #offer} does;
+     * the lock is left only where the per-item path runs code outside it: a caller-supplied release
+     * of the item an offer terminated, and posting a wakeup. Both then run at the same position in
+     * the sequence as they would per item, so failures close the mailbox before the next offer.
+     */
+    private void admitAll(Offers batch) {
+        // On the owner thread a posted wakeup runs inline (it requests the frame), so it must run
+        // right after the offer that armed it. Elsewhere posting only enqueues it; deferring the post
+        // to the next point where caller code runs keeps it before that code, as per item.
+        boolean inline = owner.isOwnerThread();
+        int index = 0;
+        int size = batch.size;
+        Signal deferred = null;
+        while (index < size) {
+            WorkHandle replaced = null;
+            Signal dispatch = null;
+            synchronized (lock) {
+                while (index < size) {
+                    int current = index++;
+                    Slot slot = batch.slots[current];
+                    WorkToken token = batch.tokens[current];
+                    if ((batch.states[current] && (slot == null || slot.mailboxIdentity != identity)) || token.scope != scope) {
+                        batch.admissions[current] = Admission.UNSUPPORTED;
+                        continue;
+                    }
+                    batch.admissions[current] = admitLocked(batch.states[current] ? slot : null, token,
+                            batch.callbacks[current], batch.releases[current]);
+                    batch.handles[current] = admittedHandle;
+                    WorkHandle terminated = admittedReplaced;
+                    Signal wake = admittedDispatch;
+                    admittedHandle = null; admittedReplaced = null; admittedDispatch = null;
+                    // The shared no-op release has no observable effect, so it is consumed in place.
+                    if (terminated != null && terminated.release == NOOP_RELEASE) { terminated.release = null; terminated = null; }
+                    if (terminated != null || (wake != null && inline)) { replaced = terminated; dispatch = wake; break; }
+                    if (wake != null) deferred = wake;
+                }
+            }
+            post(deferred);
+            deferred = null;
+            Throwable failure = release(replaced);
+            if (failure != null) failClosed(failure);
+            post(dispatch);
+        }
     }
 
     private boolean hasWorkLocked() { return !stateQueue.isEmpty() || !commands.isEmpty(); }

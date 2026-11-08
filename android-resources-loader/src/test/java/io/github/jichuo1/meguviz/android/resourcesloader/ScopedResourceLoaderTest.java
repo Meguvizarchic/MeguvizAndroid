@@ -157,6 +157,83 @@ public class ScopedResourceLoaderTest {
             loader.close(); scope.close();
         }
     }
+    @Test public void preparedInstallMatchesPutApkAndLoadsOffMain() throws Exception {
+        try (var activity = Robolectric.buildActivity(Activity.class).setup(); var descriptor = descriptor(activity.get())) {
+            ResourceScope directScope = scope(activity.get()); FakeBackend direct = new FakeBackend();
+            ResourceScope preparedScope = scope(activity.get()); FakeBackend split = new FakeBackend();
+            ScopedResourceLoader directLoader = ScopedResourceLoader.openWithBackend(directScope, direct);
+            ScopedResourceLoader preparedLoader = ScopedResourceLoader.openWithBackend(preparedScope, split);
+            List<String> script = List.of("base", "overlay", "base", "extra", "overlay");
+            for (String slot : script) {
+                ResourceState.Token directBefore = directScope.state().token(ResourceState.ALL);
+                ResourceState.Token preparedBefore = preparedScope.state().token(ResourceState.ALL);
+                List<String> eventsBeforeLoad = new ArrayList<>(split.events);
+                directLoader.putApk(slot, descriptor);
+                // The load runs on a worker thread; installation stays on the main thread.
+                AtomicReference<Object> result = new AtomicReference<>();
+                Thread worker = new Thread(() -> {
+                    try { result.set(preparedLoader.prepareApk(descriptor)); } catch (Throwable error) { result.set(error); }
+                });
+                worker.start(); worker.join();
+                assertTrue(result.get() instanceof ScopedResourceLoader.PreparedApk);
+                ScopedResourceLoader.PreparedApk prepared = (ScopedResourceLoader.PreparedApk) result.get();
+                assertTrue(prepared.isPending());
+                // Loading touches neither the loader nor the resource domain.
+                assertEquals(eventsBeforeLoad, split.events);
+                assertTrue(preparedScope.state().isCurrent(preparedBefore));
+                preparedLoader.putPrepared(slot, prepared);
+                assertFalse(prepared.isPending());
+                assertEquals(directScope.state().isCurrent(directBefore), preparedScope.state().isCurrent(preparedBefore));
+                assertEquals(direct.events, split.events);
+                assertEquals(directLoader.ownedProviderCount(), preparedLoader.ownedProviderCount());
+            }
+            assertTrue(directLoader.remove("base")); assertTrue(preparedLoader.remove("base"));
+            directLoader.close(); preparedLoader.close();
+            assertEquals(direct.events, split.events);
+            directScope.close(); preparedScope.close();
+        }
+    }
+    @Test public void preparedApkOwnershipIsExplicitAndMisuseIsRejected() throws Exception {
+        try (var activity = Robolectric.buildActivity(Activity.class).setup(); var descriptor = descriptor(activity.get())) {
+            ResourceScope scope = scope(activity.get()); FakeBackend fake = new FakeBackend();
+            ScopedResourceLoader loader = ScopedResourceLoader.openWithBackend(scope, fake);
+            ScopedResourceLoader other = ScopedResourceLoader.openWithBackend(scope(activity.get()), new FakeBackend());
+            ScopedResourceLoader.PreparedApk prepared = loader.prepareApk(descriptor);
+            assertEquals(List.of("attach"), fake.events);
+            // Rejected arguments leave the provider with the caller.
+            assertThrows(IllegalArgumentException.class, () -> loader.putPrepared("", prepared));
+            assertThrows(IllegalArgumentException.class, () -> other.putPrepared("base", prepared));
+            assertThrows(NullPointerException.class, () -> loader.putPrepared("base", null));
+            assertTrue(prepared.isPending());
+            AtomicReference<Throwable> offMain = new AtomicReference<>();
+            Thread worker = new Thread(() -> {
+                try { loader.putPrepared("base", prepared); } catch (Throwable error) { offMain.set(error); }
+            });
+            worker.start(); worker.join();
+            assertTrue(offMain.get() instanceof IllegalStateException);
+            assertTrue(prepared.isPending());
+            assertEquals(List.of("attach"), fake.events);
+            // Installed once; a second install or a late close does nothing to the loader's provider.
+            loader.putPrepared("base", prepared);
+            assertThrows(IllegalStateException.class, () -> loader.putPrepared("again", prepared));
+            prepared.close();
+            assertEquals(List.of("attach", "set:[p1]"), fake.events);
+            // Not installed: the caller's close releases it, exactly once.
+            ScopedResourceLoader.PreparedApk orphan = loader.prepareApk(descriptor);
+            orphan.close(); orphan.close();
+            assertEquals(List.of("attach", "set:[p1]", "close:p2"), fake.events);
+            assertThrows(IllegalStateException.class, () -> loader.putPrepared("late", orphan));
+            // A loader that closed meanwhile rejects the install; the caller still owns the provider.
+            ScopedResourceLoader.PreparedApk stranded = loader.prepareApk(descriptor);
+            loader.close();
+            assertThrows(IllegalStateException.class, () -> loader.putPrepared("late", stranded));
+            assertTrue(stranded.isPending());
+            stranded.close();
+            assertEquals(List.of("attach", "set:[p1]", "close:p2", "detach", "set:[]", "close:p1", "close:p3"), fake.events);
+            other.close();
+            scope.close();
+        }
+    }
     @Test public void closedScopeRejectsProviderBeforeAnyBackendIo() throws Exception {
         try (var activity = Robolectric.buildActivity(Activity.class).setup(); var descriptor = descriptor(activity.get())) {
             ResourceScope scope = scope(activity.get()); FakeBackend fake = new FakeBackend();

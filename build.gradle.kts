@@ -6,8 +6,14 @@ allprojects {
     group = "io.github.jichuo1.meguviz"
     version = "1.2.0"
 }
+// Host verification used to hard-code `python` and `cmd /c gradlew.bat`, which made verifyHost
+// unrunnable on macOS/Linux. Keep the published behaviour unchanged on Windows and let other hosts
+// opt into a specific interpreter with -PpythonExecutable=... when `python3` is not on PATH.
+val isWindows = System.getProperty("os.name").startsWith("Windows")
+val pythonExecutable = providers.gradleProperty("pythonExecutable").getOrElse(if (isWindows) "python" else "python3")
+val gradleLauncher = if (isWindows) listOf("cmd", "/c", "gradlew.bat") else listOf("./gradlew")
 val beginHostVerification by tasks.registering(Exec::class) {
-    commandLine("python", "scripts/verification.py", "start-host")
+    commandLine(pythonExecutable, "scripts/verification.py", "start-host")
 }
 subprojects {
     tasks.configureEach { mustRunAfter(beginHostVerification) }
@@ -23,7 +29,7 @@ subprojects {
             "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED", "--add-opens=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED")
         doFirst {
             if (name == "testDebugUnitTest" && gradle.taskGraph.hasTask(beginHostVerification.get())) {
-                providers.exec { commandLine("python", rootProject.file("scripts/verification.py"), "stamp", "--module", project.name, "--task", name) }.result.get().assertNormalExitValue()
+                providers.exec { commandLine(pythonExecutable, rootProject.file("scripts/verification.py"), "stamp", "--module", project.name, "--task", name) }.result.get().assertNormalExitValue()
             }
         }
         testLogging { events("failed", "skipped") }
@@ -33,7 +39,7 @@ subprojects {
         outputs.upToDateWhen { false }
         doFirst {
             if (gradle.taskGraph.hasTask(beginHostVerification.get())) {
-                providers.exec { commandLine("python", rootProject.file("scripts/verification.py"), "stamp", "--module", project.name, "--task", name) }.result.get().assertNormalExitValue()
+                providers.exec { commandLine(pythonExecutable, rootProject.file("scripts/verification.py"), "stamp", "--module", project.name, "--task", name) }.result.get().assertNormalExitValue()
             }
         }
     }
@@ -42,30 +48,30 @@ val candidatePublications = listOf("android-runtime", "android-window", "android
     .map { ":$it:publishReleasePublicationToCandidateRepository" }
 val dumpApi by tasks.registering(Exec::class) {
     dependsOn(candidatePublications, beginHostVerification)
-    commandLine("python", "scripts/api_dump.py")
+    commandLine(pythonExecutable, "scripts/api_dump.py")
 }
 val verifyConsumer by tasks.registering(Exec::class) {
     dependsOn(candidatePublications, beginHostVerification)
-    doFirst { providers.exec { commandLine("python", "scripts/verification.py", "consumer-start") }.result.get().assertNormalExitValue() }
-    commandLine("cmd", "/c", "gradlew.bat", "-p", "samples", "recordConsumption", ":plain:assembleDebug", ":embedded:assembleDebug",
-        ":plain:assembleDebugAndroidTest", ":embedded:assembleDebugAndroidTest", "--no-daemon", "--console=plain")
-    doLast { providers.exec { commandLine("python", "scripts/verification.py", "consumer-end") }.result.get().assertNormalExitValue() }
+    doFirst { providers.exec { commandLine(pythonExecutable, "scripts/verification.py", "consumer-start") }.result.get().assertNormalExitValue() }
+    commandLine(*(gradleLauncher + listOf("-p", "samples", "recordConsumption", ":plain:assembleDebug", ":embedded:assembleDebug",
+        ":plain:assembleDebugAndroidTest", ":embedded:assembleDebugAndroidTest", "--no-daemon", "--console=plain")).toTypedArray())
+    doLast { providers.exec { commandLine(pythonExecutable, "scripts/verification.py", "consumer-end") }.result.get().assertNormalExitValue() }
 }
 tasks.register<Exec>("verifyGateNegatives") {
     dependsOn(beginHostVerification)
-    commandLine("python", "scripts/verification.py", "negatives")
+    commandLine(pythonExecutable, "scripts/verification.py", "negatives")
 }
 tasks.register<Exec>("verifyHost") {
     dependsOn(beginHostVerification, dumpApi, verifyConsumer, "verifyGateNegatives")
     dependsOn(listOf("android-runtime", "android-window", "android-lifecycle", "android-resources-loader").flatMap {
         listOf(":$it:testDebugUnitTest", ":$it:lintDebug")
     })
-    commandLine("python", "scripts/verification.py", "host")
+    commandLine(pythonExecutable, "scripts/verification.py", "host")
 }
 tasks.register<Exec>("verifyDevice") {
-    commandLine("python", "scripts/verification.py", "device")
+    commandLine(pythonExecutable, "scripts/verification.py", "device")
 }
 tasks.register<Exec>("verifyReleaseCandidate") {
-    commandLine("python", "scripts/verification.py", "release", "--profile",
+    commandLine(pythonExecutable, "scripts/verification.py", "release", "--profile",
         providers.gradleProperty("meguviz.profile").orElse("full_replacement").get())
 }

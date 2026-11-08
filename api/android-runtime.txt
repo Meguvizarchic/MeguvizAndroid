@@ -47,6 +47,7 @@ public final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox
   public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Submission offerCommand(io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.lang.Runnable);
   public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Submission offerBatch(io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.util.List<java.lang.Runnable>, java.lang.Runnable);
   public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Submission offerBatch(io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.util.List<java.lang.Runnable>);
+  public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Offers offers();
   public void setPaused(boolean);
   public int pendingStateCount();
   public int pendingCommandCount();
@@ -74,6 +75,21 @@ public final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox
   public static io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Cancellation valueOf(java.lang.String);
 }
 Compiled from "BoundedMailbox.java"
+final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$HandleQueue {
+}
+Compiled from "BoundedMailbox.java"
+public final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Offers {
+  public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Offers state(io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Slot, io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.lang.Runnable);
+  public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Offers state(io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Slot, io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.lang.Runnable, java.lang.Runnable);
+  public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Offers command(io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.lang.Runnable);
+  public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Offers command(io.github.jichuo1.meguviz.android.runtime.core.WorkToken, java.lang.Runnable, java.lang.Runnable);
+  public int size();
+  public void clear();
+  public int submit();
+  public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Admission admission(int);
+  public io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$WorkHandle handle(int);
+}
+Compiled from "BoundedMailbox.java"
 public final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Outcome extends java.lang.Enum<io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Outcome> {
   public static final io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Outcome PENDING;
   public static final io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Outcome RUNNING;
@@ -93,6 +109,9 @@ final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Signal
 }
 Compiled from "BoundedMailbox.java"
 public final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Slot {
+}
+Compiled from "BoundedMailbox.java"
+final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$SlotQueue {
 }
 Compiled from "BoundedMailbox.java"
 public final class io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Submission {

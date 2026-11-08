@@ -19,7 +19,9 @@ def dump_api():
         if not classes: raise ValueError(f'{module}: no bytecode classes to inspect')
         result=subprocess.run([str(javap),'-public','-classpath',str(extracted/'classes.jar'),*classes],capture_output=True,text=True,check=True)
         if not result.stdout.strip(): raise ValueError('javap returned empty API dump')
-        target=output/f'{module}.txt'; target.write_text(result.stdout,encoding='utf-8')
+        # javap output is decoded with universal newlines, so write an explicit CRLF ending to keep
+        # the checked-in API baseline byte-identical on Windows, macOS and Linux (no whole-file churn).
+        target=output/f'{module}.txt'; target.write_text(result.stdout,encoding='utf-8',newline='\r\n')
         modules[module]=dict(aar_sha256=sha(aar),class_count=len(classes),dump=file_record(target))
         print(f'{module}: {len(classes)} bytecode classes inspected')
     current_run()

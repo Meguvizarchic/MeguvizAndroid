@@ -112,6 +112,22 @@
         "expected_cases": 4,
         "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/MailboxHandleItemContractTest.java"
       },
+      "io.github.jichuo1.meguviz.android.runtime.core.MailboxOffersEquivalenceTest": {
+        "methods": [
+          "randomizedBatchesMatchSequentialOffers",
+          "randomizedBackgroundBatchesMatchSequentialOffers",
+          "failingSupersedeReleaseClosesTheMailboxBeforeTheRestOfTheBatch",
+          "ownerThreadWakeupFailureClosesBeforeTheRestOfTheBatch",
+          "pausedCommandsAreReleasedInStagingOrderOnTheProducer",
+          "backgroundBatchPostsOneWakeupAndRunsReleasesOutsideTheLock",
+          "stagingFailsFastAndTheBatchIsConfinedToItsProducer",
+          "rejectionsShareImmutableSubmissions",
+          "concurrentBatchesStayContiguousFifoAndExactlyOnce"
+        ],
+        "sdks": [],
+        "expected_cases": 9,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/MailboxOffersEquivalenceTest.java"
+      },
       "io.github.jichuo1.meguviz.android.runtime.core.RegistryContractTest": {
         "methods": [
           "equalPriorityConflictsAndExplicitOverrideResolution",
@@ -270,6 +286,15 @@
         "expected_cases": 36,
         "source": "android-window/src/test/kotlin/io/github/jichuo1/meguviz/android/extensions/ExtensionsGoldenTest.kt"
       },
+      "io.github.jichuo1.meguviz.android.extensions.MailboxExtensionsTest": {
+        "methods": [
+          "submitBatchStagesInOrderAndClearsWhenTheBlockThrows",
+          "submitBatchIsInlinedWithoutAFunctionObject"
+        ],
+        "sdks": [],
+        "expected_cases": 2,
+        "source": "android-window/src/test/kotlin/io/github/jichuo1/meguviz/android/extensions/MailboxExtensionsTest.kt"
+      },
       "io.github.jichuo1.meguviz.android.testfixture.WindowCompatibilityGoldenTest": {
         "methods": [
           "initializationDefaultsAndPaddingBaselinePlusSafeInsets",
@@ -310,12 +335,14 @@
           "attachDetachFailureAndFailedMutationExposeRetryableCleanup",
           "orderReloadRemoveCloseAndProviderCloseFailureReleaseOwnedProviders",
           "foreignChangeAndAnotherThreadMutationAreRejectedWithoutBackendChanges",
+          "preparedInstallMatchesPutApkAndLoadsOffMain",
+          "preparedApkOwnershipIsExplicitAndMisuseIsRejected",
           "closedScopeRejectsProviderBeforeAnyBackendIo"
         ],
         "sdks": [
           30
         ],
-        "expected_cases": 6,
+        "expected_cases": 8,
         "source": "android-resources-loader/src/test/java/io/github/jichuo1/meguviz/android/resourcesloader/ScopedResourceLoaderTest.java"
       }
     }

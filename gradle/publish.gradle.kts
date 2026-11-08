@@ -5,6 +5,8 @@ import org.gradle.plugins.signing.SigningExtension
 apply(plugin = "maven-publish")
 apply(plugin = "signing")
 
+val pythonExecutable = providers.gradleProperty("pythonExecutable").getOrElse(
+    if (System.getProperty("os.name").startsWith("Windows")) "python" else "python3")
 val centralPreparation = providers.gradleProperty("meguviz.centralPrepare").orElse("false")
 val centralEnabled = when (centralPreparation.get()) {
     "true" -> true
@@ -33,7 +35,7 @@ val generateJvmApiReference = tasks.register<Exec>("generateJvmApiReference") {
     doFirst {
         val javap = File(System.getProperty("java.home"),
             if (System.getProperty("os.name").startsWith("Windows")) "bin/javap.exe" else "bin/javap")
-        commandLine("python", rootProject.file("scripts/jvm_api_reference.py"),
+        commandLine(pythonExecutable, rootProject.file("scripts/jvm_api_reference.py"),
             "--aar", releaseAar.get().asFile, "--module", project.name,
             "--version", project.version.toString(), "--output", apiReferenceDir.get().asFile,
             "--javap", javap)

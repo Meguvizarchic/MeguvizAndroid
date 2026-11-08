@@ -13,6 +13,10 @@ public final class io.github.jichuo1.meguviz.android.extensions.AndroidVersion {
   public final boolean isLessThan(int);
   public final boolean isAtMost(int);
 }
+Compiled from "MailboxExtensions.kt"
+public final class io.github.jichuo1.meguviz.android.extensions.MailboxExtensionsKt {
+  public static final int submitBatch(io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Offers, kotlin.jvm.functions.Function1<? super io.github.jichuo1.meguviz.android.runtime.core.BoundedMailbox$Offers, kotlin.Unit>);
+}
 Compiled from "PlatformExtensions.kt"
 public final class io.github.jichuo1.meguviz.android.extensions.PlatformExtensionsKt {
   public static final long getVersionCodeCompat(android.content.pm.PackageInfo);

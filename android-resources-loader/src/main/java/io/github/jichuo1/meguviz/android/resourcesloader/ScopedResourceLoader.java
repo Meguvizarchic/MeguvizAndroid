@@ -15,6 +15,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Optional owner of one ResourcesLoader and providers it creates from APK descriptors. */
 public final class ScopedResourceLoader implements AutoCloseable {
@@ -41,8 +42,29 @@ public final class ScopedResourceLoader implements AutoCloseable {
         void closeProvider(Object provider);
     }
 
+    /**
+     * A provider loaded by {@link #prepareApk}. The caller owns it until {@link #putPrepared}
+     * installs it; {@link #close()} from any thread releases it if it was not installed.
+     */
+    public static final class PreparedApk implements AutoCloseable {
+        private final ScopedResourceLoader loader;
+        private final AtomicReference<Object> provider;
+        private PreparedApk(ScopedResourceLoader loader, Object provider) {
+            this.loader = loader; this.provider = new AtomicReference<>(Objects.requireNonNull(provider));
+        }
+        /** True until it is installed or closed. */
+        public boolean isPending() { return provider.get() != null; }
+        /** Closes the provider unless a loader already took ownership of it; repeated calls are harmless. */
+        @Override public void close() {
+            Object owned = provider.getAndSet(null);
+            if (owned != null) loader.factory.closeProvider(owned);
+        }
+    }
+
     private ResourceScope scope;
     private Backend backend;
+    /** The backend that loads and closes providers; unlike {@link #backend} it is never cleared. */
+    private final Backend factory;
     private final LinkedHashMap<String, Object> providers = new LinkedHashMap<>();
     private final ArrayList<Object> owned = new ArrayList<>();
     private boolean closed, faulted;
@@ -73,7 +95,7 @@ public final class ScopedResourceLoader implements AutoCloseable {
         return result;
     }
 
-    private ScopedResourceLoader(ResourceScope scope, Backend backend) { this.scope = scope; this.backend = backend; }
+    private ScopedResourceLoader(ResourceScope scope, Backend backend) { this.scope = scope; this.backend = backend; factory = backend; }
     private static void checkMain() {
         if (Looper.myLooper() != Looper.getMainLooper()) throw new IllegalStateException("Main thread required");
     }
@@ -96,7 +118,37 @@ public final class ScopedResourceLoader implements AutoCloseable {
     public void putApk(String slot, ParcelFileDescriptor descriptor) throws IOException {
         requireOpen(); Objects.requireNonNull(slot); Objects.requireNonNull(descriptor);
         if (slot.isEmpty()) throw new IllegalArgumentException("Nonempty slot required");
-        Object replacement = backend.fromApk(descriptor);
+        install(slot, backend.fromApk(descriptor));
+    }
+
+    /**
+     * Loads an APK into a provider on the calling thread, which may be any thread, without touching
+     * this loader, its Resources or the resource domain. The APK parsing is the expensive part of
+     * {@link #putApk}; doing it here keeps it off the main thread. Hand the result to
+     * {@link #putPrepared} on the main thread. Until then the caller owns it and must close it if
+     * it is not installed (for example because the loader closed in the meantime).
+     */
+    public PreparedApk prepareApk(ParcelFileDescriptor descriptor) throws IOException {
+        Objects.requireNonNull(descriptor);
+        return new PreparedApk(this, factory.fromApk(descriptor));
+    }
+
+    /**
+     * {@link #putApk} with a provider from {@link #prepareApk}: the same checks, invalidation,
+     * provider order, replacement and failure behavior, minus the APK load. On success, and after a
+     * failure past the argument checks, the loader owns the provider; if the checks reject the call
+     * the caller still owns it.
+     */
+    public void putPrepared(String slot, PreparedApk prepared) {
+        requireOpen(); Objects.requireNonNull(slot); Objects.requireNonNull(prepared);
+        if (slot.isEmpty()) throw new IllegalArgumentException("Nonempty slot required");
+        if (prepared.loader != this) throw new IllegalArgumentException("Prepared by another loader");
+        Object provider = prepared.provider.getAndSet(null);
+        if (provider == null) throw new IllegalStateException("Prepared APK already installed or closed");
+        install(slot, provider);
+    }
+
+    private void install(String slot, Object replacement) {
         owned.add(replacement);
         LinkedHashMap<String, Object> next = new LinkedHashMap<>(providers);
         Object previous = next.put(slot, replacement);
