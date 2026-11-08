@@ -4,149 +4,194 @@
   "gate_negative_tests": 53,
   "modules": {
     "android-runtime": {
+      "io.github.jichuo1.meguviz.android.runtime.core.FrameBudgetContractTest": {
+        "methods": [
+          "legacyAndCopiedBudgetValuesWorkAcrossRefreshRatesAndLateFrames",
+          "oneDriverKeepsReentryCancellationAndOwnerIsolation"
+        ],
+        "sdks": [],
+        "expected_cases": 2,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/FrameBudgetContractTest.java"
+      },
       "io.github.jichuo1.meguviz.android.runtime.core.FrameBufferReuseContractTest": {
         "methods": [
-          "drainReusesTheSameBufferInstanceAcrossFrames",
-          "drainReusedBufferLeavesNoWorkBehindAcrossFrames",
-          "pausedMailboxDuringDrainLeavesReusableBufferClean",
-          "fatalErrorDuringDrainStillClearsReusedBuffer",
-          "synchronousDriverDeliveryKeepsBufferAndOrderCorrect",
-          "reentrantDrainFallsBackToLocalBatchWithoutCorruptingTheInstanceBuffer",
-          "rotationAndQuotaSurviveChannelCloseAndOpenInsideFrame",
-          "snapshotBufferGrowsWhenChannelsAppearAndKeepsRotation",
-          "fatalChannelCallbackClearsSchedulerSnapshotBuffer",
-          "consecutiveReentrantDrainsDoNotResetDrainingForTheOuterBatch",
+          "drainReusesTheSameBufferInstanceAndLeavesNoWorkBehind",
+          "pausedAndFatalDrainLeaveReusableBufferClean",
+          "synchronousAndReentrantDrainKeepBufferAndOrderCorrect",
+          "rotationQuotaAndSnapshotGrowthSurviveChannelChanges",
+          "fatalChannelCallbackAndConsecutiveReentrantDrainsKeepBuffersClean",
           "schedulerSnapshotEntriesAreReusedAcrossFrames"
         ],
         "sdks": [],
-        "expected_cases": 11,
+        "expected_cases": 6,
         "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/FrameBufferReuseContractTest.java"
-      },
-      "io.github.jichuo1.meguviz.android.runtime.core.MailboxBackgroundProducerExampleTest": {
-        "methods": [
-          "backgroundProducersCoalescePerKeyAndKeepPerProducerFifo",
-          "backgroundStormKeepsOneOutstandingWakeupAndBoundedStorage",
-          "backgroundBackpressureRejectsNewKeysButAllowsReplacement",
-          "backgroundActionFailureClosesMailboxAndStillReleasesEveryPayload",
-          "ownerCloseReleasesPendingBackgroundWorkExactlyOnce"
-        ],
-        "sdks": [],
-        "expected_cases": 5,
-        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/MailboxBackgroundProducerExampleTest.java"
-      },
-      "io.github.jichuo1.meguviz.android.runtime.core.MailboxConvenienceContractTest": {
-        "methods": [
-          "shorthandMatchesLegacyAdmissionCoalescingAndFifoOrder",
-          "shorthandRejectsCapacityExactlyLikeLegacy",
-          "shorthandCloseReleasesPendingWithoutRunningActionsOrCallerCleanup",
-          "shorthandPreservesForeignOwnershipRejection",
-          "shorthandMultiProducerCoalescesAndKeepsPerProducerFifo",
-          "shorthandBatchOrderAndPartialFailureMatchLegacy",
-          "shorthandBatchSnapshotsCallerList",
-          "shorthandStaleTokenDoesNotRunActionLikeLegacy",
-          "shorthandSupersededAndCancelledOutcomesMatchLegacy",
-          "shorthandDelegatesBatchValidation"
-        ],
-        "sdks": [],
-        "expected_cases": 10,
-        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/MailboxConvenienceContractTest.java"
       },
       "io.github.jichuo1.meguviz.android.runtime.core.FrameSchedulerContractTest": {
         "methods": [
-          "registrationDoesNotScheduleAndRepeatedRequestsCoalesce",
-          "independentOwnerCancellationLeavesOtherFrameRequested",
-          "cancellationAfterBatchSnapshotPreventsCallback",
-          "reentryCreatesExactlyOneLaterBatch",
-          "sameOwnerCannotInstallASecondDriverChannel",
-          "globalQuotaAndRotationPreventBusyOwnersStarvingOthers",
-          "mailboxAlternatesCommandsAndStatesWithinPerOwnerQuota",
-          "callbackFailureDoesNotLoseOtherPendingOwners",
-          "fatalErrorPropagatesButUnenteredOwnersRemainScheduled",
-          "injectedBrokenFixtureIsDetected",
+          "registrationCoalescingAndIndependentOwnerCancellation",
+          "batchSnapshotCancellationAndReentryCreateOneLaterBatch",
+          "sameOwnerSingleChannelAndGlobalQuotaRotation",
+          "mailboxAlternationAndCallbackFailureKeepOtherOwners",
+          "fatalErrorPropagatesAndInjectedBrokenFixtureIsDetected",
           "closedChannelRetainsNeitherSharedSchedulerNorCallbacks"
         ],
         "sdks": [],
-        "expected_cases": 11,
+        "expected_cases": 6,
         "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/FrameSchedulerContractTest.java"
       },
       "io.github.jichuo1.meguviz.android.runtime.core.LifecycleContractTest": {
         "methods": [
-          "detachIsRecoverableAndInvalidatesAttachLease",
-          "rebindInvalidatesOnlyRelevantDomain",
-          "externalResourceDomainsAreIndependent",
-          "closeAdmissionAndCompletionAreSeparate",
-          "rejectedCloseRequiresOwnerCompletion",
-          "closeReleasesEveryRegistrationEvenWhenSinkThrows",
-          "closingOneScopeDoesNotCloseAnother",
-          "alreadyEnteredCallbackCannotBePreemptedButNextCommitIsStale",
-          "explicitLeaseCloseInvalidatesTokens",
-          "epochOverflowChangesIdentityAndCannotReviveOldStamp",
-          "commitMustRevalidateOnOwnerThread",
-          "callbackFailureClosesScopeAndKeepsOtherCleanup",
-          "cleanupFatalAfterManyOrdinaryFailuresStillPropagatesAfterAllReleases",
-          "closingRegistrationsUnlinksOwnerWithoutWaitingForScopeClose",
-          "registrationCleanupFailureStillUnlinksAndCannotAcquireTwoOwners",
+          "detachRebindAndExternalDomainsInvalidateOnlyTheirOwners",
+          "closeAdmissionCompletionAndRejectionAreObservable",
+          "closeReleasesEveryRegistrationAndDoesNotAffectOtherScopes",
+          "commitRevalidatesOnOwnerThreadAndCallbackCloseIsFinal",
+          "leaseCloseAndEpochOverflowInvalidateStamps",
+          "callbackAndCleanupFailuresCloseScopeAfterEveryRelease",
+          "registrationCloseUnlinksOwnerEvenWhenCleanupFails",
           "bindingCloseHookIsSingleOwnerAndClearedBeforeReentry"
         ],
         "sdks": [],
-        "expected_cases": 16,
+        "expected_cases": 8,
         "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/LifecycleContractTest.java"
       },
-      "io.github.jichuo1.meguviz.android.runtime.core.MailboxContractTest": {
+      "io.github.jichuo1.meguviz.android.runtime.core.MailboxBackgroundProducerExampleTest": {
         "methods": [
-          "statesCoalesceAndCommandsKeepFifo",
-          "capacityRejectsNewKeysButAllowsReplacement",
-          "queuedCancellationPhysicallyReleasesAndReturnsCapacity",
-          "runningCancellationDoesNotPretendToPreempt",
-          "rebindBeforeLateResultRejectsCommitAndReleasesPayload",
-          "scopeCloseClearsQueueCallbacksAndRegistrations",
-          "callbackReentryWaitsForNextFrame",
-          "newerStateBetweenExtractAndBeginSupersedesExtractedPayload",
-          "publicationAtFinishBoundaryCannotLoseWakeup",
-          "backgroundStormHasOneOutstandingWakeupAndFiniteStorage",
-          "rejectedDispatcherTerminatesAcceptedWorkAndReleasesPayload",
-          "callbackFailureClosesOnlyAffectedMailbox",
-          "failingReleaseDoesNotStopOtherOwnedReleases",
-          "sinkFailureIsRecordedWithoutRecursiveReporting",
-          "pauseCancelsCommandsButRetainsLatestStateAndResumesWakeup",
-          "pauseDuringBatchDoesNotDiscardExtractedState",
-          "newCommandWhilePausedTerminatesInactiveWithoutWaitingForResume",
-          "cancelBetweenExtractionAndEntryPreventsCallback",
-          "explicitOrderedBatchPreservesOrderWithoutRollback",
-          "platformRejectionTerminatesOtherQueuedOwners",
-          "foreignSlotAndForeignTokenAreRejectedWithoutOwnershipTransfer",
-          "payloadFatalAfterOrdinaryReleaseErrorsStillReleasesRemainingPayloads",
-          "closeHookWaitsForActualOwnerCleanupAfterBackgroundRejection"
-        ],
-        "sdks": [],
-        "expected_cases": 23,
-        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/MailboxContractTest.java"
-      },
-      "io.github.jichuo1.meguviz.android.runtime.core.RegistryContractTest": {
-        "methods": [
-          "equalPriorityConflictsFailInBothInputOrders",
-          "explicitOverrideResolvesConflictDeterministically",
-          "unknownSpiMajorIsRejectedBeforeBinding",
-          "permissionExpansionIsRejected",
-          "dependencyCycleIsRejected",
-          "missingDependencyAndDuplicateIdAreRejected",
-          "frozenTypedHandleRunsTenThousandTimesWithoutCandidateTraversal",
-          "descriptorInputsAreDefensivelyCopied",
-          "missingCapabilityAndUnknownOverrideAreRejected"
-        ],
-        "sdks": [],
-        "expected_cases": 9,
-        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/RegistryContractTest.java"
-      },
-      "io.github.jichuo1.meguviz.android.runtime.core.TestkitContractTest": {
-        "methods": [
-          "reverseExecutorCompletionCannotCommitToReboundScope",
-          "controlledExecutorRejectsOverflowAndDropsCancelledClosures",
-          "virtualClockRejectsBackwardsTimeAndOverflow"
+          "backgroundProducersCoalesceAndStormKeepsOneWakeup",
+          "backgroundBackpressureAndActionFailureReleaseEveryPayload",
+          "ownerCloseReleasesPendingBackgroundWorkExactlyOnce"
         ],
         "sdks": [],
         "expected_cases": 3,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/MailboxBackgroundProducerExampleTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.runtime.core.MailboxContractTest": {
+        "methods": [
+          "statesCoalesceCommandsKeepFifoAndBatchesKeepOrder",
+          "capacityAdmissionAndBackgroundStormStayBounded",
+          "idleWakeCancellationKeepsAConcurrentProducerWakeup",
+          "idleWakeCancelDoesNotDropAFrameRequestedByAnInlineWakeup",
+          "cancellationReleasesCapacityAndPreventsLateCallback",
+          "runningCancelIsNotPreemptiveAndPausedSubmitTerminatesInactive",
+          "rebindAndExtractionTimeSupersessionReleasePayloads",
+          "scopeCloseClearsStateAndCloseHookRunsAfterOwnerCleanup",
+          "closedScopeConstructorReleasesOpenedChannel",
+          "frameBoundaryReentryAndPublicationKeepWakeup",
+          "platformAndDispatcherRejectionsTerminateOwnedWork",
+          "failuresCloseOnlyTheAffectedMailboxAndKeepOtherReleases",
+          "sinkAndFatalFailuresAreRecordedWithoutLosingReleases",
+          "pauseKeepsLatestStateAndResumesWithoutDiscardingExtractedWork",
+          "middleUnlinkKeepsFifoOrderAndCapacityAccounting",
+          "concurrentMiddleCancelKeepsQueuesConsistent",
+          "foreignSlotAndForeignTokenAreRejectedWithoutOwnershipTransfer"
+        ],
+        "sdks": [],
+        "expected_cases": 17,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/MailboxContractTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.runtime.core.MailboxConvenienceContractTest": {
+        "methods": [
+          "shorthandAdmissionCoalescingCapacityAndFifoMatchLegacy",
+          "shorthandCloseAndPartialBatchFailureMatchLegacy",
+          "shorthandForeignOwnershipAndBatchValidationMatchLegacy",
+          "shorthandBatchSnapshotAndStaleTokenMatchLegacy",
+          "shorthandMultiProducerCoalescesAndKeepsPerProducerFifo",
+          "shorthandSupersededAndCancelledOutcomesMatchLegacy"
+        ],
+        "sdks": [],
+        "expected_cases": 6,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/MailboxConvenienceContractTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.runtime.core.MailboxHandleItemContractTest": {
+        "methods": [
+          "returnedHandleIsTheQueuedItem",
+          "terminationClearsPayloadAndRunsReleaseExactlyOnce",
+          "supersededHandleCarriesReleaseAndIsDetached",
+          "cancelledHandleCarriesReleaseAndIsDetached"
+        ],
+        "sdks": [],
+        "expected_cases": 4,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/MailboxHandleItemContractTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.runtime.core.RegistryContractTest": {
+        "methods": [
+          "equalPriorityConflictsAndExplicitOverrideResolution",
+          "unknownMajorPermissionExpansionAndDependencyCycleAreRejected",
+          "missingDependencyDuplicateIdCapabilityAndOverrideAreRejected",
+          "frozenTypedHandleRunsTenThousandTimesWithoutCandidateTraversal",
+          "descriptorInputsAreDefensivelyCopied"
+        ],
+        "sdks": [],
+        "expected_cases": 5,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/RegistryContractTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.runtime.core.RetiringRegistryTest": {
+        "methods": [
+          "replacementAndCloseBoundKeepLeasesUntilDrain",
+          "releaseFailureIsTerminalAndCallbacksRunOutsideTheLock",
+          "concurrentAcquisitionAndPublicationDrainAllRetiredSnapshots",
+          "invalidBoundsSameSnapshotAndReleaseReuseAreRejected",
+          "closedLeaseAndRetirementClearSnapshotSlotAndStateFields",
+          "crossThreadCloseWithHappensBeforeThenSnapshotThrows"
+        ],
+        "sdks": [],
+        "expected_cases": 6,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/RetiringRegistryTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.runtime.core.TestkitContractTest": {
+        "methods": [
+          "reverseExecutorCompletionAndOverflowRejection",
+          "virtualClockRejectsBackwardsTimeAndOverflow"
+        ],
+        "sdks": [],
+        "expected_cases": 2,
         "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/TestkitContractTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.runtime.platform.BudgetFrameDriverPlatformTest": {
+        "methods": [
+          "nonPositiveDeadlineIsReportedAsUnknownSoConsumersKeepTheirBudget",
+          "disabledAndEnabledDriversCanCancelAndReleaseOwnership"
+        ],
+        "sdks": [
+          27,
+          37
+        ],
+        "expected_cases": 4,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/platform/BudgetFrameDriverPlatformTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.runtime.platform.BudgetFrameDriverVsyncFallbackTest": {
+        "methods": [
+          "nonPositiveDeadlineAndPresentationAreReportedAsUnknown",
+          "usableDeadlineIsDeliveredEvenWithoutAPresentationTime",
+          "preferredFrameTimelineFailureFallsBackToUnknown",
+          "timelineGetterFailureFallsBackToUnknown",
+          "usableTimelineDeliversDeadlineAndPresentationAsOnePair"
+        ],
+        "sdks": [
+          37
+        ],
+        "expected_cases": 5,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/platform/BudgetFrameDriverVsyncFallbackTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.runtime.platform.FrameDriverRequestIsolationTest": {
+        "methods": [
+          "extractedFrameAndVsyncCallbacksCannotConsumeReplacement",
+          "failedPostInvalidatesBothKindsOfPlatformCallback",
+          "failedRemoveStillInvalidatesOldCallbacksAndAllowsReplacement"
+        ],
+        "sdks": [
+          37
+        ],
+        "expected_cases": 3,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/platform/FrameDriverRequestIsolationTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.runtime.platform.MemoryBudgetObserverTest": {
+        "methods": [
+          "fullVersionIsRequiredAndSnapshotKeepsValuesIndependent",
+          "observationApiCannotMutateBudgets"
+        ],
+        "sdks": [],
+        "expected_cases": 2,
+        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/platform/MemoryBudgetObserverTest.java"
       },
       "io.github.jichuo1.meguviz.android.runtime.resources.ResourceScopePlatformTest": {
         "methods": [
@@ -163,107 +208,37 @@
       },
       "io.github.jichuo1.meguviz.android.runtime.resources.ResourceStateTest": {
         "methods": [
-          "themeInvalidationIsIndependentAndInvalidatesSameIdentity",
-          "namespaceAndDisplayCannotAlias",
-          "lruBoundAndResolverVersionAreReal",
-          "reentrantInvalidationCannotCacheOldResult",
+          "themeInvalidationIsIndependentAndReentrantInvalidationCannotCache",
+          "namespaceDisplayAliasAndLruBoundAreReal",
           "closeClearsCacheAndRejectsOldTokens"
         ],
         "sdks": [],
-        "expected_cases": 5,
+        "expected_cases": 3,
         "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/resources/ResourceStateTest.java"
-      },
-      "io.github.jichuo1.meguviz.android.runtime.core.FrameBudgetContractTest": {
-        "methods": [
-          "legacyCallbackAndDriverRetainUnknownBudget",
-          "copiedValuesAndReservationWorkAcrossRefreshRatesAndLateFrames",
-          "oneDriverKeepsReentryCancellationAndOwnerIsolation"
-        ],
-        "sdks": [],
-        "expected_cases": 3,
-        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/FrameBudgetContractTest.java"
-      },
-      "io.github.jichuo1.meguviz.android.runtime.platform.BudgetFrameDriverPlatformTest": {
-        "methods": [
-          "disabledAndEnabledDriversCanCancelAndReleaseOwnership"
-        ],
-        "sdks": [
-          27,
-          37
-        ],
-        "expected_cases": 2,
-        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/platform/BudgetFrameDriverPlatformTest.java"
-      },
-      "io.github.jichuo1.meguviz.android.runtime.core.RetiringRegistryTest": {
-        "methods": [
-          "replacementKeepsOldLeaseUntilItDrainsAndThenReleasesOnce",
-          "boundCoversAllGenerationsAndCloseRejectsNewLeases",
-          "releaseFailureIsTerminalAndCallbacksRunOutsideTheLock",
-          "concurrentAcquisitionAndPublicationDrainAllRetiredSnapshots",
-          "invalidBoundsAndSameSnapshotAreRejected",
-          "snapshotCannotBeReusedUntilItsReleaseActionFinishes",
-          "closedLeaseClearsSnapshotSlotAndStateFields",
-          "retainedClosedLeaseDisconnectsAllStrongReferences",
-          "forgetReleasesSlotSnapshotAndRegistryMapEntry",
-          "crossThreadCloseWithHappensBeforeThenSnapshotThrows"
-        ],
-        "sdks": [],
-        "expected_cases": 10,
-        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/RetiringRegistryTest.java"
-      },
-      "io.github.jichuo1.meguviz.android.runtime.platform.FrameDriverRequestIsolationTest": {
-        "methods": [
-          "extractedFrameCallbackCannotConsumeReplacement",
-          "extractedVsyncCallbackCannotConsumeReplacement",
-          "failedPostInvalidatesBothKindsOfPlatformCallback",
-          "failedRemoveStillInvalidatesOldCallbacksAndAllowsReplacement"
-        ],
-        "sdks": [
-          37
-        ],
-        "expected_cases": 4,
-        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/platform/FrameDriverRequestIsolationTest.java"
-      },
-      "io.github.jichuo1.meguviz.android.runtime.platform.MemoryBudgetObserverTest": {
-        "methods": [
-          "fullVersionIsRequired",
-          "snapshotKeepsProcessAndPackageValuesIndependent",
-          "observationApiCannotMutateBudgets"
-        ],
-        "sdks": [],
-        "expected_cases": 3,
-        "source": "android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/platform/MemoryBudgetObserverTest.java"
       }
     },
     "android-window": {
       "io.github.jichuo1.meguviz.android.window.WindowModelsTest": {
         "methods": [
-          "mergedObserverIsRemovedFromActualDestinationBeforeReinstall",
-          "detachCloseNeverLooksUpNewFloatingObserver",
+          "mergedObserverReinstallAndDetachCloseUseActualDestination",
           "repeatedInsetsDoNotAccumulateAndExternalWritesArePreserved",
           "edgeOverflowIsRejectedInsteadOfWrappingPadding"
         ],
         "sdks": [],
-        "expected_cases": 4,
+        "expected_cases": 3,
         "source": "android-window/src/test/java/io/github/jichuo1/meguviz/android/window/WindowModelsTest.java"
       },
       "io.github.jichuo1.meguviz.android.window.WindowPlatformTest": {
         "methods": [
-          "rebindDetachAndCloseRejectOldResults",
-          "preDrawRegistrationTracksDetachAndReattachAndReleases",
-          "callbackLeaseDoesNotOverwriteLaterInstaller",
-          "sharedSchedulerSurvivesSessionCloseAndPauseHasNoEmptyFrames",
-          "insetsApplicationDoesNotAccumulateOrConsumeAndHandsOff",
-          "localInsetsObserverDoesNotConsumeLaterSiblingDispatch",
-          "observePermissionCannotChangeWindowOrLayout",
-          "viewMailboxRetainsLatestStateWhileStoppedAndRebindReleasesPayload",
-          "callbackFailureClosesAffectedScopeAndReleasesOtherRegistrations",
-          "rebindCleanupFailureClosesScopeAfterTryingEveryBinding",
-          "localThemeAndNamespaceHaveIndependentResourceAuthority",
+          "rebindDetachPreDrawAndCloseRejectOldResults",
+          "callbackLeaseAndSharedSchedulerSurviveSessionClose",
+          "insetsApplicationAndLocalObserverDoNotConsumeOrAccumulate",
+          "closedScopeClaimFailsAndSameViewIsClaimableAgain",
+          "observePermissionAndFailuresCloseOnlyAffectedScope",
+          "viewMailboxAndRepeatedLeaseCloseDoNotAccumulate",
+          "localThemeNamespaceAndWindowOwnerResourceAuthority",
           "snapshotAcceptsCurrentSystemBarsUnionIncludingSystemOverlays",
-          "acceptedBackgroundCloseRejectsCallbacksBeforeOwnerCleanupWithoutThrowing",
-          "repeatedLeaseAndMailboxCloseDoesNotAccumulateOwnedEntries",
-          "windowOwnerCanInvalidateExistingLocalDomainWithoutDuplicatingScope"
+          "acceptedBackgroundCloseRejectsCallbacksBeforeOwnerCleanupWithoutThrowing"
         ],
         "sdks": [
           27,
@@ -271,17 +246,35 @@
           30,
           37
         ],
-        "expected_cases": 60,
+        "expected_cases": 36,
         "source": "android-window/src/test/java/io/github/jichuo1/meguviz/android/window/WindowPlatformTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.extensions.ExtensionsGoldenTest": {
+        "methods": [
+          "textColorAndConversionPreserveStateAndNullContract",
+          "childAndParentHandleBoundsTypesAndRemoval",
+          "paddingAndMarginsRetainOmittedEdgesAndUseAbsoluteCoordinates",
+          "dpAndSpPreserveNumberTypesSentinelsAndTruncation",
+          "nightModeUsesProvidedConfiguration",
+          "versionCodeAndSdkPredicatesRetainHighBitsAndBounds",
+          "toastDefaultsDurationAndBackgroundRejection",
+          "componentFlagsManifestDefaultsAndStateSemantics",
+          "rootInsetsProbeAndRemovalDetachDispatchExactlyOnce"
+        ],
+        "sdks": [
+          27,
+          29,
+          30,
+          37
+        ],
+        "expected_cases": 36,
+        "source": "android-window/src/test/kotlin/io/github/jichuo1/meguviz/android/extensions/ExtensionsGoldenTest.kt"
       },
       "io.github.jichuo1.meguviz.android.testfixture.WindowCompatibilityGoldenTest": {
         "methods": [
-          "initializationPreservesAuditedWindowDefaults",
-          "paddingIsBaselinePlusSafeInsetsAndNeverIncludesIme",
-          "listenerHandoffSurvivesDelegateClose",
-          "closeDoesNotOverwriteLaterPropertyOwner",
-          "ownerCanReopenAfterCloseAndClosedLifecycleIsNoop",
-          "duplicateWindowOwnerIsRejectedWithoutBreakingOriginal",
+          "initializationDefaultsAndPaddingBaselinePlusSafeInsets",
+          "listenerHandoffAndCloseDoNotOverwriteLaterOwners",
+          "ownerReopenAfterCloseAndDuplicateOwnerRejection",
           "invalidContentReleasesWindowOwnership"
         ],
         "sdks": [
@@ -290,44 +283,14 @@
           30,
           37
         ],
-        "expected_cases": 28,
+        "expected_cases": 16,
         "source": "android-window/src/test/kotlin/io/github/jichuo1/meguviz/android/testfixture/WindowCompatibilityGoldenTest.kt"
-      },
-      "io.github.jichuo1.meguviz.android.extensions.ExtensionsGoldenTest": {
-        "methods": [
-          "textColorReadsSelectedStateAndIntegerSetter",
-          "textConversionPreservesSpannableContentAndNullContract",
-          "childHandlesEmptyBoundsAndWrongTypes",
-          "parentAndRemovalRespectActualOwnership",
-          "paddingAxesRetainOmittedEdgesAndUseAbsoluteCoordinates",
-          "marginsPreserveOtherEdgesAndWrongParamsAreNoop",
-          "dpPreservesNumberTypesSentinelsAndTruncation",
-          "spUsesPlatformConversion",
-          "nightModeUsesProvidedConfiguration",
-          "versionCodeRetainsHighBitsOnModernPlatform",
-          "sdkPredicatesPreserveStrictAndInclusiveBounds",
-          "toastDefaultsAndDurationExecuteOnMain",
-          "toastRejectsBackgroundWithoutQueueing",
-          "componentFlagsAndManifestDefaultsAreExplicit",
-          "allComponentStatesHaveDefinedSemantics",
-          "rootInsetsProbeDoesNotInstallAnythingOnUnattachedView",
-          "removalDispatchesDetachExactlyOnce"
-        ],
-        "sdks": [
-          27,
-          29,
-          30,
-          37
-        ],
-        "expected_cases": 68,
-        "source": "android-window/src/test/kotlin/io/github/jichuo1/meguviz/android/extensions/ExtensionsGoldenTest.kt"
       }
     },
     "android-lifecycle": {
       "io.github.jichuo1.meguviz.android.lifecycle.LifecycleAdaptersTest": {
         "methods": [
-          "stopStartAndViewDestroyHaveSeparateOwnership",
-          "dialogDismissForwardingClosesOnlyDialogWindow"
+          "stopStartViewDestroyAndDialogDismissHaveSeparateOwnership"
         ],
         "sdks": [
           27,
@@ -335,7 +298,7 @@
           30,
           37
         ],
-        "expected_cases": 8,
+        "expected_cases": 4,
         "source": "android-lifecycle/src/test/java/io/github/jichuo1/meguviz/android/lifecycle/LifecycleAdaptersTest.java"
       }
     },
@@ -343,18 +306,16 @@
       "io.github.jichuo1.meguviz.android.resourcesloader.ScopedResourceLoaderTest": {
         "methods": [
           "api27ReportsUnsupportedAndLeavesResourceDomainAlone",
-          "scopeMismatchIsRejectedBeforeAttaching",
-          "failedAttachInvalidatesAndAttemptsDetachment",
-          "attachAndDetachFailureExposesRetryableCleanup",
-          "orderReloadRemoveAndCloseRejectOldTokensAndReleaseOwnedProviders",
-          "foreignChangeInvalidatesBothResourceAndThemeEpochs",
-          "failedMutationInvalidatesFirstAndCloseRetriesOwnedCleanup",
-          "providerCloseFailureCanBeRetriedAndClosedScopeStillReleases",
-          "closedScopeRejectsProviderBeforeAnyBackendIo",
-          "mutationFromAnotherThreadIsRejectedWithoutChangingBackend"
+          "scopeMismatchAndFailedAttachAreRejectedBeforeOwnersAttach",
+          "attachDetachFailureAndFailedMutationExposeRetryableCleanup",
+          "orderReloadRemoveCloseAndProviderCloseFailureReleaseOwnedProviders",
+          "foreignChangeAndAnotherThreadMutationAreRejectedWithoutBackendChanges",
+          "closedScopeRejectsProviderBeforeAnyBackendIo"
         ],
-        "sdks": [],
-        "expected_cases": 10,
+        "sdks": [
+          30
+        ],
+        "expected_cases": 6,
         "source": "android-resources-loader/src/test/java/io/github/jichuo1/meguviz/android/resourcesloader/ScopedResourceLoaderTest.java"
       }
     }
