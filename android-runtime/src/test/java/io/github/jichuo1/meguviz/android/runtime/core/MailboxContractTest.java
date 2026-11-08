@@ -4,6 +4,7 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.*;
@@ -314,6 +315,74 @@ public class MailboxContractTest {
         runtime.frame(); assertEquals(Outcome.PENDING, state.outcome()); assertFalse(runtime.hasFrame());
         batched.setPaused(false); runtime.drain(); assertEquals(Outcome.COMPLETED, state.outcome());
         assertEquals(Arrays.asList(2, 2), commits);
+    }
+
+    /**
+     * The intrusive FIFOs must unlink a middle node without disturbing the order of the survivors.
+     * Every removal here is neither the head nor the tail, which is exactly the case the old
+     * {@code ArrayDeque.remove(Object)} scanned for while holding the lock.
+     */
+    @Test public void middleUnlinkKeepsFifoOrderAndCapacityAccounting() {
+        BoundedMailbox box = mailbox(4, 4, 2);
+        Slot[] slots = { box.newSlot(), box.newSlot(), box.newSlot(), box.newSlot() };
+        WorkHandle[] states = new WorkHandle[4];
+        for (int i = 0; i < states.length; i++) {
+            final int value = i;
+            states[i] = box.offerState(slots[i], token, () -> commits.add(value), releases::incrementAndGet).handle();
+        }
+        WorkHandle[] commands = new WorkHandle[4];
+        for (int i = 0; i < commands.length; i++) {
+            final int value = 10 + i;
+            commands[i] = box.offerCommand(token, () -> commits.add(value), releases::incrementAndGet).handle();
+        }
+
+        assertEquals(Cancellation.CANCELLED, commands[1].cancel());
+        assertEquals(Cancellation.CANCELLED, states[2].cancel());
+        assertEquals(Cancellation.CANCELLED, commands[2].cancel());
+        assertEquals(Cancellation.CANCELLED, states[1].cancel());
+        assertEquals(2, box.pendingStateCount());
+        assertEquals(2, box.pendingCommandCount());
+        assertEquals(4, releases.get());
+        assertEquals(Outcome.CANCELLED, commands[1].outcome());
+        assertEquals(Outcome.CANCELLED, states[2].outcome());
+
+        runtime.drain();
+        assertEquals("survivors must keep admission order across both queues",
+                Arrays.asList(10, 0, 13, 3), commits);
+        assertEquals(0, box.pendingStateCount());
+        assertEquals(0, box.pendingCommandCount());
+        assertEquals(8, releases.get());
+        assertFalse(runtime.hasFrame());
+        box.close();
+    }
+
+    /** Concurrent producers cancel arbitrary queued commands while the owner is idle; the intrusive
+     * links must stay consistent so the survivors drain exactly once and capacity is exact. */
+    @Test public void concurrentMiddleCancelKeepsQueuesConsistent() throws Exception {
+        BoundedMailbox box = mailbox(64, 4096, 32);
+        int producers = 4, perProducer = 500;
+        CountDownLatch start = new CountDownLatch(1);
+        List<Thread> threads = new ArrayList<>();
+        for (int producer = 0; producer < producers; producer++) {
+            threads.add(new Thread(() -> {
+                try { start.await(); } catch (InterruptedException error) { throw new AssertionError(error); }
+                for (int i = 0; i < perProducer; i++) {
+                    WorkHandle command = box.offerCommand(token, () -> { }, releases::incrementAndGet).handle();
+                    if ((i & 1) == 0) assertEquals(Cancellation.CANCELLED, command.cancel());
+                }
+            }, "mailbox-middle-cancel-" + producer));
+        }
+        threads.forEach(Thread::start);
+        start.countDown();
+        for (Thread thread : threads) { thread.join(10_000); assertFalse("producer hung", thread.isAlive()); }
+
+        assertEquals(producers * perProducer / 2, box.pendingCommandCount());
+        runtime.drain();
+        assertEquals(0, box.pendingCommandCount());
+        assertEquals(producers * perProducer, releases.get());
+        assertFalse(runtime.hasFrame());
+        assertTrue(runtime.errors.isEmpty());
+        box.close();
     }
 
     @Test public void foreignSlotAndForeignTokenAreRejectedWithoutOwnershipTransfer() {

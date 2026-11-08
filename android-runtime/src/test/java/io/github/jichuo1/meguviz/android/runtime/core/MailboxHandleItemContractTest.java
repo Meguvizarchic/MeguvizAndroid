@@ -2,7 +2,6 @@ package io.github.jichuo1.meguviz.android.runtime.core;
 
 import org.junit.Test;
 import java.lang.reflect.Field;
-import java.util.ArrayDeque;
 import java.util.IdentityHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.Assert.*;
@@ -33,7 +32,7 @@ public class MailboxHandleItemContractTest {
         assertSame("the returned handle must be the latest-state entry itself", state, latest.get(slot));
 
         WorkHandle command = box.offerCommand(token, () -> { }, releases::incrementAndGet).handle();
-        ArrayDeque<?> commands = reflect(box, "commands");
+        BoundedMailbox.HandleQueue commands = reflect(box, "commands");
         assertSame("the returned handle must be the queued command itself", command, commands.peekLast());
         box.close();
     }

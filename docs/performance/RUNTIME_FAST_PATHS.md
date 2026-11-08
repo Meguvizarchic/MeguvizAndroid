@@ -140,6 +140,18 @@ coalescing/背压、FrameMetrics/JankStats 后，可落地与不适用的结论�
 - `ChoreographerDriver` 每请求一个 `FrameCallback`，与 `FrameScheduler` 单 pending 的契约一致，
   不存在重复请求 vsync。
 
+## 2026-11-08：默认接线 BudgetFrameDriver（R1，host 验证）
+
+上一节的调研发现「默认集成拿不到 deadline」——`UiScheduler` 的 deadline 感知帧预算在默认 Android 桥路径上实际是死代码。本轮把它接起来：
+
+- `WindowSession.open(...)` 默认改用 `new BudgetFrameDriver(owner, true)`：API 33+ 读 `postVsyncCallback` 的 `preferredFrameTimeline.deadlineNanos`，低版本在驱动内部回退到单参数 `Choreographer` 路径。
+- `BudgetFrameDriver.VsyncDriver.onVsync` 把三处平台读取（`getFrameTimeNanos`、`getPreferredFrameTimeline`、`getDeadlineNanos`/`getExpectedPresentationTimeNanos`）放进同一 `try`：任何 `RuntimeException` 都回退单参数回调（下游收到 `deadline == null` → `FrameBudget.estimated = true` → 固定预算），不再把元数据异常抛回 Choreographer——异常逃逸会让 `FrameScheduler.scheduled` 保持 `true` 而停摆。`Error` 仍上抛，与 `UiScheduler.apply`/`checkPending` 的约定一致。
+- 放宽 presentation 检查：`expectedPresentationTimeNanos` 全链路没有消费者，要求它为正只会白白丢掉可用的 deadline；它现在只是原样透传。校验收敛为 `isUsableDeadline`（非正 deadline 才回退）。
+
+验证：`:android-runtime:testDebugUnitTest` + `:android-window:testDebugUnitTest` 175 项通过（新增 `BudgetFrameDriverVsyncFallbackTest` 6 例，反射构造 API 37 的 `FrameData`/`FrameTimeline`）；lint 0 error。
+
+残余风险：该改动让**默认路径**从「无 deadline」变成「有 deadline」——常规刷新率下预算仍被 clamp 到 2ms 不变，late frame 预算收缩是预期；但 `postVsyncCallback` 的真机兼容性与帧节奏未测（本机无 instrumentation 设备）。对抗复核（`34-adversarial-round3.md`）另指出：若 `postVsyncCallback` 在某些设备上不可用，`WindowSession.open` 会直接失败，需真机确认。
+
 ## 环境事实
 
 - 复现环境 JDK：Microsoft 17.0.20、Gradle 托管 Adoptium 21.0.7；未安装 JDK 25/27。

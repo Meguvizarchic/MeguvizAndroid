@@ -32,15 +32,6 @@ public final class BudgetFrameDriver implements FrameDriver {
         return deadlineNanos > 0;
     }
 
-    /**
-     * True when the platform actually supplied an expected presentation time. The deadline and the
-     * presentation time are copied as a pair, so a non-positive presentation time means the timeline
-     * was unusable and the whole pair is reported as unknown.
-     */
-    static boolean isUsablePresentation(long presentationNanos) {
-        return presentationNanos > 0;
-    }
-
     @TargetApi(33)
     static final class VsyncDriver implements FrameDriver {
         interface Queue {
@@ -59,14 +50,20 @@ public final class BudgetFrameDriver implements FrameDriver {
                 pending = null;
                 Callback target = callback; callback = null;
                 if (target == null) return;
-                long frame = data.getFrameTimeNanos();
+                long frame = 0L;
                 long deadline, presentation;
                 try {
+                    // The frame time is read here too: a metadata failure must never escape into the
+                    // platform callback, where it would leave FrameScheduler.scheduled set and stall
+                    // the scheduler. On failure the frame is reported as unknown.
+                    frame = data.getFrameTimeNanos();
                     Choreographer.FrameTimeline timeline = data.getPreferredFrameTimeline();
                     deadline = timeline.getDeadlineNanos();
                     if (!isUsableDeadline(deadline)) { target.onFrame(frame); return; }
+                    // The presentation time is copied through for consumers, but it is not a
+                    // scheduling input: requiring it would throw away a perfectly usable deadline on
+                    // a platform that reports no presentation time.
                     presentation = timeline.getExpectedPresentationTimeNanos();
-                    if (!isUsablePresentation(presentation)) { target.onFrame(frame); return; }
                 } catch (RuntimeException failure) {
                     // The timeline can be unavailable (for example after a SurfaceFlinger restart) or
                     // no longer valid. Report the frame as unknown rather than letting a metadata

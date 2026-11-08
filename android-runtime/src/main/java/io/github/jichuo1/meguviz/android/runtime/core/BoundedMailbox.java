@@ -1,6 +1,5 @@
 package io.github.jichuo1.meguviz.android.runtime.core;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
@@ -24,14 +23,19 @@ public final class BoundedMailbox implements AutoCloseable {
     private final int stateCapacity;
     private final int commandCapacity;
     /** Drain order of state slots; a slot appears at most once, marked by Slot.queued. */
-    private final ArrayDeque<Slot> stateQueue = new ArrayDeque<>();
+    private final SlotQueue stateQueue = new SlotQueue();
     /**
      * Latest state work per slot. The value is the {@link WorkHandle} itself, which carries the
      * slot/action/release payload; a separate item object per offer would only duplicate the handle.
      */
     private final IdentityHashMap<Slot, WorkHandle> latest = new IdentityHashMap<>();
-    private final ArrayDeque<WorkHandle> commands = new ArrayDeque<>();
-    private final ArrayDeque<WorkHandle> extracted = new ArrayDeque<>();
+    /**
+     * Pending commands and in-flight work. Both are intrusive FIFOs so cancel/supersede can unlink in
+     * O(1) while holding the lock; a handle is in at most one of them, tracked by
+     * {@link WorkHandle#inExtracted}.
+     */
+    private final HandleQueue commands = new HandleQueue();
+    private final HandleQueue extracted = new HandleQueue();
     private final FrameScheduler.FrameChannel channel;
     private final Registration registration;
     private Signal signal;
@@ -176,12 +180,12 @@ public final class BoundedMailbox implements AutoCloseable {
                     WorkHandle item;
                     if (!commands.isEmpty() && (commandTurn || stateQueue.isEmpty())) item = commands.removeFirst();
                     else {
-                        Slot slot = stateQueue.pollFirst();
+                        Slot slot = stateQueue.removeFirst();
                         slot.queued = false;
                         item = latest.get(slot);
                     }
                     commandTurn = !commandTurn;
-                    extracted.add(item); batch.add(item);
+                    extracted.addLast(item); item.inExtracted = true; batch.add(item);
                 }
             }
             try {
@@ -217,13 +221,13 @@ public final class BoundedMailbox implements AutoCloseable {
             if (closed) terminated = terminateLocked(item, Outcome.CLOSED, null, true);
             else if (!item.token.isCurrent()) terminated = terminateLocked(item, Outcome.STALE, null, true);
             else if (paused && item.slot != null) {
-                extracted.remove(item);
+                extracted.remove(item); item.inExtracted = false;
                 if (latest.get(item.slot) == item) { stateQueue.addLast(item.slot); item.slot.queued = true; }
                 return;
             }
             else if (paused || !scope.isActive()) terminated = terminateLocked(item, Outcome.INACTIVE, null, true);
             else {
-                extracted.remove(item);
+                extracted.remove(item); item.inExtracted = false;
                 if (item.slot == null) pendingCommands--;
                 else if (latest.get(item.slot) == item) latest.remove(item.slot);
                 item.outcome = Outcome.RUNNING;
@@ -252,31 +256,22 @@ public final class BoundedMailbox implements AutoCloseable {
         Outcome previous = item.outcome;
         if (previous != Outcome.PENDING && previous != Outcome.RUNNING) return null;
         if (previous == Outcome.PENDING) {
-            removeQueued(extracted, item);
-            if (item.slot == null) { removeQueued(commands, item); pendingCommands--; }
-            else {
-                if (removeStatePosition && item.slot.queued && latest.get(item.slot) == item) {
-                    removeQueued(stateQueue, item.slot);
-                    item.slot.queued = false;
-                }
-                if (latest.get(item.slot) == item) latest.remove(item.slot);
+            // Unlink from the queue the item actually occupies; every unlink is O(1), so a producer
+            // thread never scans a queue while holding the lock. A state item is queued exactly when
+            // slot.queued is set, and a command is in extracted exactly when inExtracted is set.
+            if (item.inExtracted) extracted.remove(item);
+            else if (item.slot == null) { commands.remove(item); pendingCommands--; }
+            else if (removeStatePosition && item.slot.queued && latest.get(item.slot) == item) {
+                stateQueue.remove(item.slot);
+                item.slot.queued = false;
             }
+            if (item.slot != null && latest.get(item.slot) == item) latest.remove(item.slot);
         }
         item.outcome = result; item.failure = failure;
         // Detach from the mailbox and drop the payload; release stays until release(handle) runs it.
         item.mailbox = null; item.slot = null; item.action = null; item.token = null;
+        item.inExtracted = false;
         return item;
-    }
-
-    /**
-     * Removes one element, checking the head and then the tail before falling back to a linear
-     * scan: producers usually cancel the item they just submitted, and
-     * {@link ArrayDeque#remove(Object)} always scans from the head. The worst case stays O(n).
-     */
-    private static <T> void removeQueued(ArrayDeque<T> queue, T element) {
-        if (queue.peekFirst() == element) queue.removeFirst();
-        else if (queue.peekLast() == element) queue.removeLast();
-        else queue.remove(element);
     }
 
     /** Test-only seam invoked between the idle decision and the wake cancellation. */
@@ -338,9 +333,15 @@ public final class BoundedMailbox implements AutoCloseable {
             if (paused) {
                 wake = signalPending ? signal : null;
                 signalPending = false;
-                for (WorkHandle item : new ArrayList<>(commands)) cancelled.add(terminateLocked(item, Outcome.INACTIVE, null, true));
-                for (WorkHandle item : new ArrayList<>(extracted)) {
+                for (WorkHandle item = commands.head; item != null; ) {
+                    WorkHandle next = item.nextLink;
+                    cancelled.add(terminateLocked(item, Outcome.INACTIVE, null, true));
+                    item = next;
+                }
+                for (WorkHandle item = extracted.head; item != null; ) {
+                    WorkHandle next = item.nextLink;
                     if (item.slot == null) cancelled.add(terminateLocked(item, Outcome.INACTIVE, null, true));
+                    item = next;
                 }
             } else dispatch = requestSignalLocked();
         }
@@ -390,14 +391,15 @@ public final class BoundedMailbox implements AutoCloseable {
             // Preserve the deterministic drain order for the release callbacks instead of the
             // IdentityHashMap iteration order of latest.values().
             LinkedHashSet<WorkHandle> all = new LinkedHashSet<>();
-            for (Slot slot : stateQueue) {
+            for (Slot slot = stateQueue.head; slot != null; slot = slot.nextLink) {
                 WorkHandle queued = latest.get(slot);
                 if (queued != null) all.add(queued);
             }
-            all.addAll(commands); all.addAll(extracted);
-            // The whole queue is cleared below, so per-item queue removal would only add O(n^2).
-            for (WorkHandle item : all) terminals.add(terminateLocked(item, outcome, reason, false));
-            for (Slot slot : stateQueue) slot.queued = false;
+            for (WorkHandle item = commands.head; item != null; item = item.nextLink) all.add(item);
+            for (WorkHandle item = extracted.head; item != null; item = item.nextLink) all.add(item);
+            // Per-item unlink is O(1), so termination leaves every queue empty before the bulk clear.
+            for (WorkHandle item : all) terminals.add(terminateLocked(item, outcome, reason, true));
+            for (Slot slot = stateQueue.head; slot != null; slot = slot.nextLink) slot.queued = false;
             stateQueue.clear(); latest.clear(); commands.clear(); extracted.clear(); pendingCommands = 0;
         }
         Throwable cleanup = null;
@@ -453,6 +455,9 @@ public final class BoundedMailbox implements AutoCloseable {
         private final Object mailboxIdentity;
         /** True while this slot occupies a position in the state drain queue; drain order marker. */
         boolean queued;
+        /** Intrusive stateQueue links; membership is tracked by {@link #queued}. */
+        private Slot previousLink;
+        private Slot nextLink;
         private Slot(Object identity) { mailboxIdentity = identity; }
     }
     public static final class Submission {
@@ -478,6 +483,11 @@ public final class BoundedMailbox implements AutoCloseable {
         private Runnable action;
         /** Release callback carried from termination until it runs; never exposed to callers. */
         private Runnable release;
+        /** Intrusive FIFO links; a handle is in at most one of commands/extracted. */
+        private WorkHandle previousLink;
+        private WorkHandle nextLink;
+        /** True while this handle occupies a position in the extracted queue. */
+        private boolean inExtracted;
         private WorkHandle(long sequence, BoundedMailbox mailbox, Slot slot, WorkToken token,
                           Runnable action, Runnable release) {
             this.sequence = sequence; this.mailbox = mailbox;
@@ -491,5 +501,81 @@ public final class BoundedMailbox implements AutoCloseable {
             if (current == null) return Cancellation.ALREADY_TERMINAL;
             return current.cancel(this);
         }
+    }
+
+    /**
+     * Intrusive doubly-linked FIFO of {@link WorkHandle}. Add, poll and arbitrary remove are all
+     * O(1) and allocation-free, so a producer thread never scans a queue while holding the lock.
+     * The link fields live on the handle itself; a handle belongs to at most one HandleQueue.
+     */
+    static final class HandleQueue {
+        WorkHandle head;
+        WorkHandle tail;
+
+        boolean isEmpty() { return head == null; }
+        WorkHandle peekLast() { return tail; }
+
+        void addLast(WorkHandle node) {
+            node.previousLink = tail;
+            node.nextLink = null;
+            if (tail == null) head = node; else tail.nextLink = node;
+            tail = node;
+        }
+
+        WorkHandle removeFirst() {
+            WorkHandle node = head;
+            if (node == null) return null;
+            head = node.nextLink;
+            if (head == null) tail = null; else head.previousLink = null;
+            node.previousLink = null; node.nextLink = null;
+            return node;
+        }
+
+        void remove(WorkHandle node) {
+            if (node.previousLink == null) head = node.nextLink;
+            else node.previousLink.nextLink = node.nextLink;
+            if (node.nextLink == null) tail = node.previousLink;
+            else node.nextLink.previousLink = node.previousLink;
+            node.previousLink = null; node.nextLink = null;
+        }
+
+        void clear() { head = null; tail = null; }
+    }
+
+    /**
+     * Intrusive doubly-linked FIFO of {@link Slot}, used for the state drain order. A slot belongs to
+     * the queue exactly while {@link Slot#queued} is set, so removal needs no separate membership tag.
+     */
+    static final class SlotQueue {
+        Slot head;
+        Slot tail;
+
+        boolean isEmpty() { return head == null; }
+
+        void addLast(Slot node) {
+            node.previousLink = tail;
+            node.nextLink = null;
+            if (tail == null) head = node; else tail.nextLink = node;
+            tail = node;
+        }
+
+        Slot removeFirst() {
+            Slot node = head;
+            if (node == null) return null;
+            head = node.nextLink;
+            if (head == null) tail = null; else head.previousLink = null;
+            node.previousLink = null; node.nextLink = null;
+            return node;
+        }
+
+        void remove(Slot node) {
+            if (node.previousLink == null) head = node.nextLink;
+            else node.previousLink.nextLink = node.nextLink;
+            if (node.nextLink == null) tail = node.previousLink;
+            else node.nextLink.previousLink = node.previousLink;
+            node.previousLink = null; node.nextLink = null;
+        }
+
+        void clear() { head = null; tail = null; }
     }
 }

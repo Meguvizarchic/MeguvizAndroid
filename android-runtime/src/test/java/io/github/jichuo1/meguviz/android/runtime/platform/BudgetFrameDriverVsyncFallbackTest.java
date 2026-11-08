@@ -65,22 +65,18 @@ public class BudgetFrameDriverVsyncFallbackTest {
         assertEquals(1_000L, delivery.values[0]);
     }
 
-    @Test public void nonPositivePresentationFallsBackEvenWhenDeadlineIsUsable() {
+    @Test public void usableDeadlineIsDeliveredEvenWithoutAPresentationTime() {
+        // The presentation time is copied through for consumers but is not a scheduling input, so a
+        // platform that reports none must not cost us a usable deadline.
         Choreographer.FrameData data = frameData(2_000L);
         Choreographer.FrameTimeline timeline = timeline(3L, -1L, 5_000L);
         setPreferredTimeline(data, timeline);
         Delivery delivery = deliver(data);
-        assertEquals(1, delivery.legacy.get());
-        assertEquals(0, delivery.copied.get());
-        assertEquals(2_000L, delivery.values[0]);
-    }
-
-    @Test public void presentationUsabilityFollowsTheSamePositiveRule() {
-        assertFalse(BudgetFrameDriver.isUsablePresentation(0L));
-        assertFalse(BudgetFrameDriver.isUsablePresentation(-1L));
-        assertFalse(BudgetFrameDriver.isUsablePresentation(Long.MIN_VALUE));
-        assertTrue(BudgetFrameDriver.isUsablePresentation(1L));
-        assertTrue(BudgetFrameDriver.isUsablePresentation(System.nanoTime()));
+        assertEquals(0, delivery.legacy.get());
+        assertEquals(1, delivery.copied.get());
+        // values are {frameTime, deadline, presentation}; the platform's -1 presentation is copied
+        // through rather than used to discard the usable deadline.
+        assertArrayEquals(new long[] {2_000L, 5_000L, -1L}, delivery.values);
     }
 
     @Test public void preferredFrameTimelineFailureFallsBackToUnknown() {
