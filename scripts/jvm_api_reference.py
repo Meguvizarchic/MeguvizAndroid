@@ -62,14 +62,16 @@ def build_reference(aar, module, version, output, javap):
               'this is a signature reference, not Kotlin KDoc or behavioral documentation.</p>'
               '<p>AAR SHA-256: <code>' + sha(raw_aar) + '</code></p><pre>' + html.escape(body) +
               '</pre></body></html>\n')
-    (output / 'index.html').write_text(markup, encoding='utf-8', newline='\n')
+    # Bytes, not write_text(newline=...): that keyword needs Python 3.10, and macOS ships 3.9. The text
+    # only contains '\n', so the bytes are identical to write_text(newline='\n') on every platform.
+    (output / 'index.html').write_bytes(markup.encode('utf-8'))
     manifest = dict(schema_version=1, module=module, version=version, aar_sha256=sha(raw_aar),
                     classes_jar_sha256=sha(raw_jar), class_file_count=len(names),
                     public_class_count=len(public), public_classes=sorted(public),
                     signature_sha256=sha(body.encode('utf-8')),
                     scope='JVM public signatures; may include Kotlin internal or synthetic declarations; not KDoc')
-    (output / 'api-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n',
-                                              encoding='utf-8', newline='\n')
+    (output / 'api-manifest.json').write_bytes(
+        (json.dumps(manifest, ensure_ascii=False, indent=2) + '\n').encode('utf-8'))
 
 
 def main():
