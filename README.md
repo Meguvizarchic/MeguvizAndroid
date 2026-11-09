@@ -31,7 +31,7 @@
 
 ---
 
-Android 生命周期、窗口、资源和有界调度基础库。当前源码版本为 `1.0.0`。GitHub Release 提供本地 Maven 仓库格式的制品；Maven Central 的签名和发布将单独处理。
+Android 生命周期、窗口、资源和有界调度基础库。当前源码版本为 `1.2.0`（尚未发布）。`1.0.0` 与 `1.1.0` 已发布到 Maven Central，Central 上每个文件都附带 `.asc` 签名（本仓库没有验证这些签名）；GitHub Release 另提供本地 Maven 仓库格式的制品。
 
 模块：`android-runtime`、`android-window`、可选 `android-lifecycle` 与 `android-resources-loader`；`samples/` 是独立 Maven 消费者，`testkit/` 和 `benchmarks/` 服务于开发验证。核心模块不反向依赖 UI、反射或 Hook 框架。
 
@@ -82,6 +82,8 @@ python scripts/verification.py consumer-pin
 # 校验值准备改变了样例输入，完整门禁必须重新开始。
 .\scripts\run-gradle.ps1 verifyHost
 ```
+
+`verifyHost` 还会把 `dumpApi` 生成的公开 API 与 `api/legacy/<版本>/` 里取自 Maven Central 已发布制品的基线比较，要求每个已发布的公开类、成员和父类型仍然存在（只增不删）。`api/*.txt` 本身每次都由构建重写，不是基线。新发布版本后用 `python scripts/legacy_abi.py generate --version <版本> --artifacts-dir <Maven 布局的制品目录>` 生成基线；确需移除时在 `api/legacy/<版本>/allowed-removals.txt` 逐行写 `类名 :: 成员声明 # 理由`。该检查只覆盖公开 JVM 签名，不证明行为兼容。
 
 `consumer-pin` 只接收本次发布记录中的精确坐标，并要求候选 AAR 与当前 release 输出逐字节一致；第三方依赖校验记录保持原样，不信任整个 group，也不关闭 strict 校验。单独执行 `verifyHost` 时，若样例固定的候选校验值与当前工具链重新构建的字节不一致，会按预期拒绝。完整门禁还会检查独立样例解析的模块集合与字节确实等于本次候选。
 
