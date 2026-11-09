@@ -13,13 +13,13 @@ public final class EpochDomain implements AutoCloseable {
     EpochDomain(OwnerDispatcher owner, long initialEpoch) {
         this.owner = Objects.requireNonNull(owner);
         owner.checkOwner();
-        if (initialEpoch < 0) throw new IllegalArgumentException("Negative epoch");
+        if (initialEpoch < 0) throw new IllegalArgumentException("Negative epoch: initialEpoch must be >= 0, got " + initialEpoch);
         epoch = initialEpoch;
     }
 
     public Stamp stamp() {
         owner.checkOwner();
-        if (closed) throw new IllegalStateException("Closed domain");
+        if (closed) throw new IllegalStateException("Closed domain: this EpochDomain is closed, so stamp() and invalidate() are refused (matches() just returns false). A closed domain cannot be reopened; create a new one.");
         return new Stamp(identity, epoch);
     }
 
@@ -30,7 +30,7 @@ public final class EpochDomain implements AutoCloseable {
 
     public void invalidate() {
         owner.checkOwner();
-        if (closed) throw new IllegalStateException("Closed domain");
+        if (closed) throw new IllegalStateException("Closed domain: this EpochDomain is closed, so stamp() and invalidate() are refused (matches() just returns false). A closed domain cannot be reopened; create a new one.");
         if (epoch == Long.MAX_VALUE) { identity = new Object(); epoch = 0; }
         else epoch++;
     }

@@ -19,7 +19,7 @@ public final class BindingLease implements AutoCloseable {
     public boolean isClosed() { scope.dispatcher().checkOwner(); return closed; }
     public void onClose(Runnable listener) {
         scope.dispatcher().checkOwner();
-        if (closed) throw new IllegalStateException("Binding lease closed");
+        if (closed) throw new IllegalStateException("Binding lease closed: onClose() was refused because the lease is already closed. Check isClosed() first, or register the listener before the lease can close.");
         if (closeListener != null) throw new IllegalStateException("Binding lease already has a close owner");
         closeListener = java.util.Objects.requireNonNull(listener);
     }

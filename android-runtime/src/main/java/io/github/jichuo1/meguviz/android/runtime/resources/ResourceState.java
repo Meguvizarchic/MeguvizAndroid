@@ -27,7 +27,7 @@ public final class ResourceState implements AutoCloseable {
         this.namespace = Objects.requireNonNull(namespace); this.snapshot = Objects.requireNonNull(snapshot);
         this.capacity = capacity; resources = new EpochDomain(owner); theme = new EpochDomain(owner);
     }
-    private void requireOpen() { owner.checkOwner(); if (closed) throw new IllegalStateException("Closed resources"); }
+    private void requireOpen() { owner.checkOwner(); if (closed) throw new IllegalStateException("Closed resources: this ResourceState is closed, so the call is refused. A closed state cannot be reopened; create a new ResourceState."); }
     private static void checkMask(int mask) {
         if (mask == 0 || (mask & ~ALL) != 0) throw new IllegalArgumentException("Explicit resource dependencies required");
     }
@@ -61,7 +61,7 @@ public final class ResourceState implements AutoCloseable {
     public <T extends DerivedValue> T resolve(String requestedNamespace, String resolver, int version,
                                             String descriptor, int mask, Class<T> type, Supplier<T> resolve) {
         requireOpen(); checkMask(mask);
-        if (!namespace.equals(requestedNamespace)) throw new IllegalArgumentException("Namespace mismatch");
+        if (!namespace.equals(requestedNamespace)) throw new IllegalArgumentException("Namespace mismatch: resolve() was called with a namespace other than the one this ResourceState was created for. Use the ResourceState of that namespace.");
         if (version < 1) throw new IllegalArgumentException("Resolver version must be positive");
         Key key = new Key(resolver, version, descriptor, mask, type);
         DerivedValue existing = cache.get(key);

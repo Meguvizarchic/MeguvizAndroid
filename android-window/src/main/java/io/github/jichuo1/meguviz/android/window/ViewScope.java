@@ -49,7 +49,7 @@ public final class ViewScope implements AutoCloseable {
     void checkOpen() {
         owner.checkOwner();
         if (lifecycle.admissionClosed() || session == null || session.lifecycle().admissionClosed())
-            throw new IllegalStateException("View scope closed or closing");
+            throw new IllegalStateException("View scope closed or closing: the view scope, or the window session it belongs to, is closed or closing, so the call is refused. Scope the view again in the live session.");
     }
     void refreshOwner() {
         if (lifecycle.admissionClosed()) return;

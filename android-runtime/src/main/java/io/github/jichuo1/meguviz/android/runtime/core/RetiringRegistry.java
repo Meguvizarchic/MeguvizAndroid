@@ -32,7 +32,7 @@ public final class RetiringRegistry<T> {
     public Retirement<T> replace(AdapterRegistry<T> replacement, Runnable releaseReplacement) {
         Slot<T> next = new Slot<>(replacement, releaseReplacement);
         synchronized (state) {
-            if (state.current == null) throw new IllegalStateException("Registry is closed");
+            if (state.current == null) throw new IllegalStateException("Registry is closed: replace() was refused because this RetiringRegistry is closed and cannot be reopened.");
             if (state.snapshots.containsKey(replacement)) throw new IllegalArgumentException("Snapshot is current or retiring");
             if (state.snapshots.size() == state.maxSnapshots) throw new IllegalStateException("Snapshot capacity exhausted");
             Slot<T> previous = state.current;
@@ -69,7 +69,7 @@ public final class RetiringRegistry<T> {
 
         public AdapterRegistry<T> snapshot() {
             AdapterRegistry<T> current = snapshot;
-            if (current == null) throw new IllegalStateException("Lease is closed");
+            if (current == null) throw new IllegalStateException("Lease is closed: snapshot() was refused because this lease was already released. Acquire a new lease for the current snapshot.");
             return current;
         }
 

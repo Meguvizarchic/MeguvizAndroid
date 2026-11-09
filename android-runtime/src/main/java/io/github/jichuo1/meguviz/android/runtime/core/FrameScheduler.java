@@ -37,7 +37,7 @@ public final class FrameScheduler implements AutoCloseable {
 
     public FrameChannel openChannel(Object identity, FrameWork callback, int quota) {
         owner.checkOwner();
-        if (closed) throw new IllegalStateException("Scheduler closed");
+        if (closed) throw new IllegalStateException("Scheduler closed: openChannel() was refused because this FrameScheduler is closed. A closed scheduler cannot be reopened; create a new one for the new owner.");
         if (quota <= 0) throw new IllegalArgumentException("Positive channel quota required");
         Objects.requireNonNull(identity); Objects.requireNonNull(callback);
         for (FrameChannel channel : channels) {
@@ -190,13 +190,13 @@ public final class FrameScheduler implements AutoCloseable {
         public boolean isClosed() { owner.checkOwner(); return callback == null; }
         public void onClose(Runnable listener) {
             owner.checkOwner();
-            if (callback == null) throw new IllegalStateException("Frame channel closed");
+            if (callback == null) throw new IllegalStateException("Frame channel closed: the channel (or its scheduler) is already closed, so listeners and frame requests are refused. Open a new channel with openChannel().");
             if (closeListener != null) throw new IllegalStateException("Close listener already owned");
             closeListener = Objects.requireNonNull(listener);
         }
         public void requestFrame() {
             owner.checkOwner();
-            if (callback == null || scheduler == null || scheduler.closed) throw new IllegalStateException("Frame channel closed");
+            if (callback == null || scheduler == null || scheduler.closed) throw new IllegalStateException("Frame channel closed: the channel (or its scheduler) is already closed, so listeners and frame requests are refused. Open a new channel with openChannel().");
             pending = true; scheduler.schedule();
         }
         public void cancelPending() {

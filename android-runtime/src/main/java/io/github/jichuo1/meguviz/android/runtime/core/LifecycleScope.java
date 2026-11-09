@@ -48,7 +48,7 @@ public final class LifecycleScope implements AutoCloseable {
     }
     private void requireOpen() {
         owner.checkOwner();
-        if (admissionClosed.get() || closed) throw new IllegalStateException("Scope is closing or closed");
+        if (admissionClosed.get() || closed) throw new IllegalStateException("Scope is closing or closed: no new leases or registrations are admitted once close has been requested. Create a new LifecycleScope for the next owner instance.");
     }
     public void setAttached(boolean value) {
         requireOpen(); touched = true;

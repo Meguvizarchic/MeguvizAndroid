@@ -97,10 +97,10 @@ public final class ScopedResourceLoader implements AutoCloseable {
 
     private ScopedResourceLoader(ResourceScope scope, Backend backend) { this.scope = scope; this.backend = backend; factory = backend; }
     private static void checkMain() {
-        if (Looper.myLooper() != Looper.getMainLooper()) throw new IllegalStateException("Main thread required");
+        if (Looper.myLooper() != Looper.getMainLooper()) throw new IllegalStateException("Main thread required: ScopedResourceLoader may only be used on the main thread.");
     }
     private void requireOpen() {
-        checkMain(); if (closed) throw new IllegalStateException("Closed loader");
+        checkMain(); if (closed) throw new IllegalStateException("Closed loader: this ScopedResourceLoader is closed (close() was called), so the call is refused. Open a new loader for the live scope.");
         scope.state().snapshot();
         if (faulted) throw new IllegalStateException("Loader faulted; close it");
     }

@@ -18,7 +18,7 @@ public final class Registration implements AutoCloseable {
 
     void ownedBy(Runnable onClose) {
         owner.checkOwner();
-        if (release == null) throw new IllegalStateException("Registration closed");
+        if (release == null) throw new IllegalStateException("Registration closed: it was already released, so it cannot be handed to an owner. Register again to get a new one.");
         if (ownerRelease != null) throw new IllegalStateException("Registration already has an owner");
         ownerRelease = Objects.requireNonNull(onClose);
     }

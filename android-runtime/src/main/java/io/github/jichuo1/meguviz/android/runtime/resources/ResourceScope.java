@@ -41,7 +41,7 @@ public final class ResourceScope implements AutoCloseable {
         owner.checkOwner(); requireContext();
         return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, context.getResources().getDisplayMetrics());
     }
-    private void requireContext() { if (context == null) throw new IllegalStateException("Closed resources"); }
+    private void requireContext() { if (context == null) throw new IllegalStateException("Closed resources: this ResourceScope is closed, so unit conversions are refused. Obtain the scope again from the live window or session."); }
     @Override public void close() {
         owner.checkOwner(); state.close(); context = null; observedTheme = null;
     }

@@ -9,7 +9,7 @@ final class ObserverLease<T> implements AutoCloseable {
     private T installed;
     ObserverLease(Access<T> access) { this.access = Objects.requireNonNull(access); }
     void attach(T current) {
-        if (access == null) throw new IllegalStateException("Observer lease closed");
+        if (access == null) throw new IllegalStateException("Observer lease closed: attach() was refused because the lease was already released. Take a new lease.");
         if (current == installed) return;
         T previous = installed; installed = null;
         if (previous != null) {

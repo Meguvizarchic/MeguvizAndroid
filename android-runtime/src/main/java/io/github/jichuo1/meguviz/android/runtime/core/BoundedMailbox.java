@@ -73,7 +73,7 @@ public final class BoundedMailbox implements AutoCloseable {
         channel.onClose(() -> { if (!isClosed()) failClosed(new IllegalStateException("Frame channel closed")); });
     }
 
-    public Slot newSlot() { owner.checkOwner(); synchronized (lock) { if (closed) throw new IllegalStateException("Mailbox closed"); } return new Slot(identity); }
+    public Slot newSlot() { owner.checkOwner(); synchronized (lock) { if (closed) throw new IllegalStateException("Mailbox closed: it was closed directly, or together with its scope or frame channel, and a closed mailbox cannot be reopened. Create a new mailbox from the live scope instead of keeping this reference."); } return new Slot(identity); }
     public Submission offerState(Slot slot, WorkToken token, Runnable callback, Runnable release) {
         if (slot == null || slot.mailboxIdentity != identity) return UNSUPPORTED;
         return offer(slot, token, callback, release);
@@ -92,7 +92,7 @@ public final class BoundedMailbox implements AutoCloseable {
     public Submission offerBatch(WorkToken token, List<Runnable> callbacks, Runnable release) {
         final List<Runnable> copy = new ArrayList<>(callbacks);
         for (Runnable callback : copy) Objects.requireNonNull(callback);
-        if (copy.isEmpty()) throw new IllegalArgumentException("Empty batch");
+        if (copy.isEmpty()) throw new IllegalArgumentException("Empty batch: offer at least one state or command before submitting a batch.");
         return offerCommand(token, () -> { for (Runnable callback : copy) callback.run(); }, release);
     }
     /** Batch offer without a caller-owned cleanup: same snapshot, order and token checks. */
@@ -585,7 +585,7 @@ public final class BoundedMailbox implements AutoCloseable {
     public void onClose(Runnable listener) {
         owner.checkOwner();
         synchronized (lock) {
-            if (closed) throw new IllegalStateException("Mailbox closed");
+            if (closed) throw new IllegalStateException("Mailbox closed: it was closed directly, or together with its scope or frame channel, and a closed mailbox cannot be reopened. Create a new mailbox from the live scope instead of keeping this reference.");
             if (closeListener != null) throw new IllegalStateException("Mailbox already has a close owner");
             closeListener = Objects.requireNonNull(listener);
         }

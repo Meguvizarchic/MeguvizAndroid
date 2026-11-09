@@ -95,7 +95,7 @@ public final class InsetsSlot implements AutoCloseable {
         if (margins) marginsOwned = true; else paddingOwned = true;
         return result;
     }
-    private void requireOpen() { scope.checkOpen(); if (view == null) throw new IllegalStateException("Insets slot closed"); }
+    private void requireOpen() { scope.checkOpen(); if (view == null) throw new IllegalStateException("Insets slot closed: its view was released (the slot, its view scope or its window session is closed), so the call is refused. Open a new slot from a live scope."); }
     /** Close before the next owner calls setOnApplyWindowInsetsListener; no hidden getter is used. */
     public void handOffToExternalOwner() { close(); }
     @Override public void close() { registration.close(); }

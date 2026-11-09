@@ -94,7 +94,7 @@ public final class WindowSession implements AutoCloseable {
     ErrorSink errors() { return errorSink; }
     void checkOpen() {
         owner.checkOwner();
-        if (lifecycle.admissionClosed()) throw new IllegalStateException("Window session closed or closing");
+        if (lifecycle.admissionClosed()) throw new IllegalStateException("Window session closed or closing: the session was closed or is being closed (for example its window was destroyed), so new work is refused. Use the session of the current window.");
     }
     public void requirePermission(Permission required) {
         checkOpen();
@@ -163,7 +163,7 @@ public final class WindowSession implements AutoCloseable {
             channel.onClose(() -> { this.work = null; requested = false; channels.remove(this); });
         }
         public void requestFrame() {
-            checkOpen(); if (work == null) throw new IllegalStateException("Channel closed");
+            checkOpen(); if (work == null) throw new IllegalStateException("Channel closed: this window frame channel was closed, so requestFrame() is refused. Open a new channel from the live session.");
             requested = true; refresh();
         }
         public void cancelPending() { owner.checkOwner(); requested = false; channel.cancelPending(); }

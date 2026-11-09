@@ -2271,24 +2271,24 @@
       </component>
       <component group="io.github.jichuo1.meguviz" name="meguviz-android-runtime" version="1.2.0">
          <artifact name="meguviz-android-runtime-1.2.0.aar">
-            <sha256 value="2c3ba92935fcc899df87b28ce8b0e7896e6cd4c5d9a9e1bfd6eb35fcaad725fb" origin="Meguviz family 1.2.0 staging; re-verify against Maven Central after publication"/>
+            <sha256 value="d86e0c687f4480e7b6f65c8240e5f04ccc6c766bf1c98633973ebae1a7b921a7" origin="Meguviz family 1.2.0 staging; re-verify against Maven Central after publication"/>
          </artifact>
          <artifact name="meguviz-android-runtime-1.2.0.pom">
             <sha256 value="53c3aab0fb781407b10e25ed2bd5fa155892a63a2c3b7991515aa61b4f0562b7" origin="Meguviz family 1.2.0 staging; re-verify against Maven Central after publication"/>
          </artifact>
          <artifact name="meguviz-android-runtime-1.2.0.module">
-            <sha256 value="1f3974a08dbd919e7d1d9c4e74a6aa70dc0871288185619dee2ebb2bf468465e" origin="Meguviz family 1.2.0 staging; re-verify against Maven Central after publication"/>
+            <sha256 value="089c458f2e4adc18089ddcf15469469c986fb2f9376e61d69c8f8a0b16b5fe8f" origin="Meguviz family 1.2.0 staging; re-verify against Maven Central after publication"/>
          </artifact>
       </component>
       <component group="io.github.jichuo1.meguviz" name="meguviz-android-window" version="1.2.0">
          <artifact name="meguviz-android-window-1.2.0.aar">
-            <sha256 value="2201e765c0c99353eb744acbbfaf5399c69933b18be23b561a0ba8933038e824" origin="Meguviz family 1.2.0 staging; re-verify against Maven Central after publication"/>
+            <sha256 value="f0ec711cba44ea8e9482343b5b5254877590e74dedc6ed1ddd0b68634828e6d5" origin="Meguviz family 1.2.0 staging; re-verify against Maven Central after publication"/>
          </artifact>
          <artifact name="meguviz-android-window-1.2.0.pom">
             <sha256 value="9ef70e9ab44bc63e318f4d470e60a8606eab58f15c1b6df983924a2c1ab9f4d9" origin="Meguviz family 1.2.0 staging; re-verify against Maven Central after publication"/>
          </artifact>
          <artifact name="meguviz-android-window-1.2.0.module">
-            <sha256 value="e4321ad2fe89063dafe1fbba3cd3df34bd0b4b4cbff0f67c704980241ae6acc3" origin="Meguviz family 1.2.0 staging; re-verify against Maven Central after publication"/>
+            <sha256 value="2cd2a1b4fb9e01988247ee67431380fe89bf888093b24c904d968f2ae6087aa6" origin="Meguviz family 1.2.0 staging; re-verify against Maven Central after publication"/>
          </artifact>
       </component>
       <component group="io.github.jichuo1.meguviz" name="meguviz-android-lifecycle" version="1.2.0">
