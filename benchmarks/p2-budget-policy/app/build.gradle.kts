@@ -20,8 +20,8 @@ dependencies {
     androidTestImplementation(files(rootProject.file("inputs/android-runtime.aar")))
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    // Local AAR file dependencies omit their POM; use the already published runtime's Kotlin version.
-    androidTestImplementation("org.jetbrains.kotlin:kotlin-stdlib:2.2.10")
+    // Local AAR file dependencies omit their POM; use the Kotlin version the family is built with.
+    androidTestImplementation("org.jetbrains.kotlin:kotlin-stdlib:2.4.21")
 }
 fun sha(file: File): String = MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
 fun checkPrepared() {

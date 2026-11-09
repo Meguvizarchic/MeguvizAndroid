@@ -1,6 +1,9 @@
 plugins {
     alias(libs.plugins.android.library) apply false
     alias(libs.plugins.android.application) apply false
+    // Classpath anchor only: AGP's built-in Kotlin compiles with the KGP version found here instead of its
+    // bundled default (2.2.10). Modules do not apply this plugin.
+    alias(libs.plugins.kotlin.android) apply false
 }
 allprojects {
     group = "io.github.jichuo1.meguviz"
