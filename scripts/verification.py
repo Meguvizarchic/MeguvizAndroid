@@ -17,6 +17,10 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = ('android-runtime', 'android-window', 'android-lifecycle')
+# Modules whose public API is dumped and compared with the published release. `android-resources-loader` is optional and
+# is not consumed by the pinned sample consumers, so it is not part of MODULES (publication/consumer checks), but its
+# published 1.1.0 API is just as binding.
+API_MODULES = MODULES + ('android-resources-loader',)
 TEST_MODULES = MODULES + ('android-resources-loader',)
 GROUP = 'io.github.jichuo1.meguviz'
 VERSION = '1.2.0'
@@ -180,7 +184,7 @@ def inspect_lint(module: str) -> dict:
     return dict(name=f'{module}-lint', status='PASS', report=file_record(report))
 
 def artifact_path(module: str, extension: str, classifier: str = '') -> Path:
-    if module not in MODULES or extension not in ('aar','pom','jar','module') or classifier not in ('','sources'):
+    if module not in API_MODULES or extension not in ('aar','pom','jar','module') or classifier not in ('','sources'):
         raise ValueError('Unknown publication artifact')
     artifact = f'meguviz-{module}'
     artifact_root = ROOT/'build/repo/io/github/jichuo1/meguviz'/artifact
@@ -347,7 +351,7 @@ def inspect_consumer() -> list[dict]:
 
 def inspect_api() -> dict:
     manifest=bound_marker(ROOT/'build/verification/api.json'); checks=[]
-    for module in MODULES:
+    for module in API_MODULES:
         item=manifest['modules'][module]
         if item.get('aar_sha256') != sha(artifact_path(module,'aar')) or item.get('class_count',0) <= 0: raise ValueError('API dump uses stale or empty AAR')
         path=validate_record(item['dump'])

@@ -2,6 +2,8 @@ Compiled from "ScopedResourceLoader.java"
 public final class io.github.jichuo1.meguviz.android.resourcesloader.ScopedResourceLoader implements java.lang.AutoCloseable {
   public static io.github.jichuo1.meguviz.android.resourcesloader.ScopedResourceLoader$OpenResult open(io.github.jichuo1.meguviz.android.runtime.resources.ResourceScope, android.content.res.Resources);
   public void putApk(java.lang.String, android.os.ParcelFileDescriptor) throws java.io.IOException;
+  public io.github.jichuo1.meguviz.android.resourcesloader.ScopedResourceLoader$PreparedApk prepareApk(android.os.ParcelFileDescriptor) throws java.io.IOException;
+  public void putPrepared(java.lang.String, io.github.jichuo1.meguviz.android.resourcesloader.ScopedResourceLoader$PreparedApk);
   public boolean remove(java.lang.String);
   public void invalidateExternalChange();
   public int ownedProviderCount();
@@ -31,6 +33,11 @@ Compiled from "ScopedResourceLoader.java"
 public final class io.github.jichuo1.meguviz.android.resourcesloader.ScopedResourceLoader$OpenResult {
   public final io.github.jichuo1.meguviz.android.resourcesloader.ScopedResourceLoader$Status status;
   public final io.github.jichuo1.meguviz.android.resourcesloader.ScopedResourceLoader loader;
+}
+Compiled from "ScopedResourceLoader.java"
+public final class io.github.jichuo1.meguviz.android.resourcesloader.ScopedResourceLoader$PreparedApk implements java.lang.AutoCloseable {
+  public boolean isPending();
+  public void close();
 }
 Compiled from "ScopedResourceLoader.java"
 public final class io.github.jichuo1.meguviz.android.resourcesloader.ScopedResourceLoader$Status extends java.lang.Enum<io.github.jichuo1.meguviz.android.resourcesloader.ScopedResourceLoader$Status> {

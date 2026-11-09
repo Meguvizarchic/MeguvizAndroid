@@ -20,7 +20,8 @@ import sys
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULES = ('android-runtime', 'android-window', 'android-lifecycle')
+# Every published module that has a public API dump: the three consumer-pinned ones plus the optional resources loader.
+MODULES = ('android-runtime', 'android-window', 'android-lifecycle', 'android-resources-loader')
 
 GROUP_PATH = "io/github/jichuo1/meguviz"
 HEADER = re.compile(r"^(?P<modifiers>(?:[\w-]+ )*?)(?P<kind>@interface|interface|class|enum) (?P<name>[^\s<]+)")

@@ -47,7 +47,9 @@ subprojects {
         }
     }
 }
-val candidatePublications = listOf("android-runtime", "android-window", "android-lifecycle")
+// android-resources-loader is not consumed by the pinned samples, but its candidate AAR feeds the public-API dump and the
+// published-release comparison like the other three.
+val candidatePublications = listOf("android-runtime", "android-window", "android-lifecycle", "android-resources-loader")
     .map { ":$it:publishReleasePublicationToCandidateRepository" }
 val dumpApi by tasks.registering(Exec::class) {
     dependsOn(candidatePublications, beginHostVerification)

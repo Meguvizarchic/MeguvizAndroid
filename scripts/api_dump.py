@@ -4,14 +4,14 @@ from pathlib import Path
 import subprocess
 import time
 import zipfile
-from verification import ROOT, MODULES, artifact_path, current_run, file_record, publication, sha, write_json
+from verification import ROOT, API_MODULES, artifact_path, current_run, file_record, publication, sha, write_json
 
 def dump_api():
     run=current_run(); publication(require_run=True)
     output=ROOT/'api'; output.mkdir(exist_ok=True)
     javap=Path(os.environ['JAVA_HOME'])/'bin'/('javap.exe' if os.name=='nt' else 'javap')
     modules={}
-    for module in MODULES:
+    for module in API_MODULES:
         aar=artifact_path(module,'aar'); extracted=ROOT/'build/api'/module; extracted.mkdir(parents=True,exist_ok=True)
         with zipfile.ZipFile(aar) as archive: (extracted/'classes.jar').write_bytes(archive.read('classes.jar'))
         with zipfile.ZipFile(extracted/'classes.jar') as archive:

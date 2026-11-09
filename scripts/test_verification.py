@@ -40,7 +40,7 @@ class GateRejectionTest(unittest.TestCase):
         if body is None: body='<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase classname="example.ContractTest" name="required"/></testsuite>'
         return self.put(f'{module}/build/test-results/testDebugUnitTest/TEST-contract.xml',body)
     def publications(self):
-        for module in gate.MODULES:
+        for module in gate.API_MODULES:
             self.marker(module,'publishReleasePublicationToCandidateRepository')
             artifact='meguviz-'+module; artifact_root=f'build/repo/io/github/jichuo1/meguviz/{artifact}'
             base=f'{artifact_root}/{gate.VERSION}'; value=gate.VERSION
@@ -64,7 +64,7 @@ class GateRejectionTest(unittest.TestCase):
         self.json('samples/build/consumed-artifacts.json',rows); gate.finish_consumer()
     def api(self):
         modules={}
-        for module in gate.MODULES:
+        for module in gate.API_MODULES:
             contract='public final class example.Contract {\n  public void call();\n  public int count();\n}\n'
             path=self.put('api/'+module+'.txt',contract)
             self.put('api/legacy/1.0.0/'+module+'.txt','// published release fixture\n\n'+contract)
@@ -206,6 +206,12 @@ class GateRejectionTest(unittest.TestCase):
         dump=gate.ROOT/'api/android-runtime.txt'; dump.write_text(dump.read_text().replace('  public int count();\n',''),encoding='utf-8')
         data=gate.read_json(gate.ROOT/'build/verification/api.json'); data['modules']['android-runtime']['dump']=gate.file_record(dump); gate.write_json(gate.ROOT/'build/verification/api.json',data)
         with self.assertRaisesRegex(ValueError,'no longer contains published members.*count'): gate.inspect_api()
+    def test_optional_module_api_that_lost_a_published_member_rejected(self):
+        # android-resources-loader is not in MODULES (no consumer pins) but its published API is just as binding.
+        self.publications(); self.api()
+        dump=gate.ROOT/'api/android-resources-loader.txt'; dump.write_text(dump.read_text().replace('  public int count();\n',''),encoding='utf-8')
+        data=gate.read_json(gate.ROOT/'build/verification/api.json'); data['modules']['android-resources-loader']['dump']=gate.file_record(dump); gate.write_json(gate.ROOT/'build/verification/api.json',data)
+        with self.assertRaisesRegex(ValueError,'android-resources-loader.*count'): gate.inspect_api()
     def test_api_gate_requires_a_published_release_baseline(self):
         self.publications(); self.api(); (gate.ROOT/'api/legacy/1.0.0/android-window.txt').unlink()
         with self.assertRaisesRegex(ValueError,'Missing published-release API baseline'): gate.inspect_api()
