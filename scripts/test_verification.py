@@ -65,7 +65,9 @@ class GateRejectionTest(unittest.TestCase):
     def api(self):
         modules={}
         for module in gate.MODULES:
-            path=self.put('api/'+module+'.txt','public final class example.Contract { public void call(); }')
+            contract='public final class example.Contract {\n  public void call();\n  public int count();\n}\n'
+            path=self.put('api/'+module+'.txt',contract)
+            self.put('api/legacy/1.0.0/'+module+'.txt','// published release fixture\n\n'+contract)
             modules[module]={'aar_sha256':gate.sha(gate.artifact_path(module,'aar')),'class_count':1,'dump':gate.file_record(path)}
         self.json('build/verification/api.json',dict(gate.current_run(),modules=modules))
     def lint(self,module='android-runtime'):
@@ -199,6 +201,19 @@ class GateRejectionTest(unittest.TestCase):
     def test_old_api_dump_rejected(self):
         self.publications(); self.api(); path=gate.ROOT/'build/verification/api.json'; data=gate.read_json(path); data['modules']['android-runtime']['aar_sha256']='0'*64; gate.write_json(path,data)
         with self.assertRaisesRegex(ValueError,'stale or empty AAR'): gate.inspect_api()
+    def test_api_that_lost_a_published_member_rejected(self):
+        self.publications(); self.api()
+        dump=gate.ROOT/'api/android-runtime.txt'; dump.write_text(dump.read_text().replace('  public int count();\n',''),encoding='utf-8')
+        data=gate.read_json(gate.ROOT/'build/verification/api.json'); data['modules']['android-runtime']['dump']=gate.file_record(dump); gate.write_json(gate.ROOT/'build/verification/api.json',data)
+        with self.assertRaisesRegex(ValueError,'no longer contains published members.*count'): gate.inspect_api()
+    def test_api_gate_requires_a_published_release_baseline(self):
+        self.publications(); self.api(); (gate.ROOT/'api/legacy/1.0.0/android-window.txt').unlink()
+        with self.assertRaisesRegex(ValueError,'Missing published-release API baseline'): gate.inspect_api()
+    def test_api_that_only_added_members_accepted(self):
+        self.publications(); self.api()
+        dump=gate.ROOT/'api/android-runtime.txt'; dump.write_text(dump.read_text().replace('  public int count();\n','  public int count();\n  public int added();\n'),encoding='utf-8')
+        data=gate.read_json(gate.ROOT/'build/verification/api.json'); data['modules']['android-runtime']['dump']=gate.file_record(dump); gate.write_json(gate.ROOT/'build/verification/api.json',data)
+        self.assertEqual('PASS',gate.inspect_api()['status'])
     def test_old_apk_replacement_after_successful_build_rejected(self):
         self.publications(); self.consumer(); gate.consumer_paths('plain')['debug_apk'].write_bytes(b'old apk')
         with self.assertRaisesRegex(ValueError,'Artifact changed'): gate.inspect_consumer()

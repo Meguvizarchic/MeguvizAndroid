@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -42,6 +43,12 @@ DEVICE_SCENARIO_TESTS = dict(zip(DEVICE_SCENARIOS, (
 )))
 WINDOW_FIXTURE = 'verification/fixtures/window-compatibility/WindowCompatibilityFixture.kt'
 ERRORS = (ValueError, OSError, ET.ParseError, zipfile.BadZipFile, KeyError, TypeError)
+
+def legacy_abi():
+    """Loaded by path so it also works when this file itself was loaded by path (the unit tests do)."""
+    spec = importlib.util.spec_from_file_location('legacy_abi', Path(__file__).with_name('legacy_abi.py'))
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    return module
 
 def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -348,6 +355,8 @@ def inspect_api() -> dict:
         text=path.read_text()
         forbidden=FORBIDDEN_API + (('io.github.jichuo1.meguviz.android.window.','io.github.jichuo1.meguviz.android.lifecycle.') if module=='android-runtime' else ())
         if not re.search(r'public (?:final |abstract )?(?:class|interface)',text) or any(value in text for value in forbidden): raise ValueError('Empty or forbidden public API')
+        lost=legacy_abi().check_dump(module,text,ROOT)
+        if lost: raise ValueError('Public API no longer contains published members: '+'; '.join(lost[:5]))
         checks.append(dict(module=module,**item))
     return dict(name='public-api-boundary',status='PASS',modules=checks)
 
