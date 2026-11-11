@@ -326,6 +326,22 @@
         ],
         "expected_cases": 4,
         "source": "android-lifecycle/src/test/java/io/github/jichuo1/meguviz/android/lifecycle/LifecycleAdaptersTest.java"
+      },
+      "io.github.jichuo1.meguviz.android.lifecycle.OpenWindowTest": {
+        "methods": [
+          "destroyedActivityIsRefusedBeforeAnythingIsOpened",
+          "explicitNamespaceIsKeptAndOtherThreadsAreRefused",
+          "oneCallMatchesOpenThenBindThroughStopStartAndDestroy",
+          "refusedSecondOwnerLeavesTheFirstSessionAndTheLifecycleUntouched"
+        ],
+        "sdks": [
+          27,
+          29,
+          30,
+          37
+        ],
+        "expected_cases": 16,
+        "source": "android-lifecycle/src/test/java/io/github/jichuo1/meguviz/android/lifecycle/OpenWindowTest.java"
       }
     },
     "android-resources-loader": {

@@ -14,7 +14,7 @@
 [![Language](https://img.shields.io/badge/lang-Java-DEA584?style=flat-square&labelColor=2d3a55)](https://github.com/Meguvizarchic/MeguvizAndroid)
 [![Issues](https://img.shields.io/github/issues/Meguvizarchic/MeguvizAndroid?style=flat-square&labelColor=2d3a55)](https://github.com/Meguvizarchic/MeguvizAndroid/issues)
 
-[GitHub Maven 消费](#github-maven-消费) · [本地 Maven 消费](#本地-maven-消费) · [验证](#验证)
+[GitHub Maven 消费](#github-maven-消费) · [本地 Maven 消费](#本地-maven-消费) · [一行打开窗口会话](#一行打开窗口会话) · [验证](#验证)
 
 </div>
 
@@ -25,6 +25,7 @@
 
 - [GitHub Maven 消费](#github-maven-消费)
 - [本地 Maven 消费](#本地-maven-消费)
+- [一行打开窗口会话](#一行打开窗口会话)
 - [验证](#验证)
 
 </details>
@@ -70,6 +71,21 @@ implementation("io.github.jichuo1.meguviz:meguviz-android-window:1.2.0")
 ```
 
 本地仓库中的工件未作为签名发布上传到 Maven Central；使用前核对 GitHub Release 附带的 SHA-256。UI Android 桥单独管理，不包含在本项目的发布包内。
+
+## 一行打开窗口会话
+
+Activity 自己就是 `LifecycleOwner`（`ComponentActivity`、`AppCompatActivity`）时，可选模块 `android-lifecycle` 提供一次调用的入口（源码 `1.2.0`，尚未发布）：
+
+```java
+// onCreate 里；不需要在 onStart / onStop / onDestroy 里转发
+WindowSession session = LifecycleAdapters.openWindow(this, WindowSession.Permission.OWN_WINDOW);
+```
+
+它就是 `WindowSession.open(getWindow(), this, getPackageName(), permission)` 加 `LifecycleAdapters.bindWindow(this, session)`：启动/停止跟随生命周期，销毁时关闭会话。权限仍须显式给出；需要别的资源命名空间时用三参形式 `openWindow(activity, namespace, permission)`。
+
+- 不缓存：每次调用都打开一个新会话；同一窗口的第二个 `OWN_WINDOW` 会话照常被拒绝，`OBSERVE` / `APPLY_LOCAL` 会话可以并存。
+- 已销毁的 Activity 直接抛 `IllegalStateException`，不会交回一个已经关闭的会话；非主线程调用同样被拒绝。
+- 裸 `android.app.Activity`（不是 `LifecycleOwner`）不能用这个入口（编译期就不通过），仍用 `WindowSession.open` 并自行转发生命周期。
 
 ## 验证
 

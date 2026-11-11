@@ -1,5 +1,6 @@
 package io.github.jichuo1.meguviz.android.lifecycle;
 
+import android.app.Activity;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleEventObserver;
@@ -12,6 +13,36 @@ import java.util.Objects;
 /** Explicit owner adapters; no application/provider initialization or Context type guessing. */
 public final class LifecycleAdapters {
     private LifecycleAdapters() { }
+    /**
+     * One call for an Activity that is its own {@link LifecycleOwner} (ComponentActivity, AppCompatActivity):
+     * {@link #openWindow(Activity, String, WindowSession.Permission)} with the Activity's package name
+     * as the resource namespace.
+     */
+    public static <A extends Activity & LifecycleOwner> WindowSession openWindow(A activity, WindowSession.Permission permission) {
+        return openWindow(activity, Objects.requireNonNull(activity, "activity").getPackageName(), permission);
+    }
+    /**
+     * Opens a session on the Activity's window and hands it to the Activity's lifecycle. It is exactly
+     * {@code WindowSession.open(activity.getWindow(), activity, namespace, permission)} followed by
+     * {@link #bindWindow}: start/stop follow the lifecycle and the session closes on destroy, so the
+     * Activity forwards nothing from onStart, onStop or onDestroy. Nothing is cached: every call opens
+     * a new session, and a second {@code OWN_WINDOW} session on one window is refused as usual.
+     *
+     * <p>Owner (main) thread only. An already destroyed Activity is refused before anything is opened,
+     * instead of handing back a session that is already closed.</p>
+     */
+    public static <A extends Activity & LifecycleOwner> WindowSession openWindow(A activity, String namespace, WindowSession.Permission permission) {
+        Objects.requireNonNull(activity, "activity");
+        if (activity.isDestroyed() || activity.getLifecycle().getCurrentState() == Lifecycle.State.DESTROYED)
+            throw new IllegalStateException("Activity destroyed: " + activity.getClass().getName() + " is already destroyed, so no window session is opened for it. Open the session while the Activity is alive, usually in onCreate.");
+        WindowSession session = WindowSession.open(activity.getWindow(), activity, namespace, permission);
+        try { bindWindow(activity, session); }
+        catch (RuntimeException | Error failure) {
+            try { session.close(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+        return session;
+    }
     public static Registration bindWindow(LifecycleOwner owner, WindowSession session) {
         session.dispatcher().checkOwner(); Objects.requireNonNull(owner);
         Lifecycle lifecycle = owner.getLifecycle();

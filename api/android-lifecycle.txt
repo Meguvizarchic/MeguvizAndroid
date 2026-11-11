@@ -1,5 +1,7 @@
 Compiled from "LifecycleAdapters.java"
 public final class io.github.jichuo1.meguviz.android.lifecycle.LifecycleAdapters {
+  public static <A extends android.app.Activity & androidx.lifecycle.LifecycleOwner> io.github.jichuo1.meguviz.android.window.WindowSession openWindow(A, io.github.jichuo1.meguviz.android.window.WindowSession$Permission);
+  public static <A extends android.app.Activity & androidx.lifecycle.LifecycleOwner> io.github.jichuo1.meguviz.android.window.WindowSession openWindow(A, java.lang.String, io.github.jichuo1.meguviz.android.window.WindowSession$Permission);
   public static io.github.jichuo1.meguviz.android.runtime.core.Registration bindWindow(androidx.lifecycle.LifecycleOwner, io.github.jichuo1.meguviz.android.window.WindowSession);
   public static io.github.jichuo1.meguviz.android.runtime.core.Registration bindViewOwner(androidx.lifecycle.LifecycleOwner, io.github.jichuo1.meguviz.android.window.ViewScope);
   public static io.github.jichuo1.meguviz.android.runtime.core.Registration bindFragmentView(androidx.fragment.app.Fragment, io.github.jichuo1.meguviz.android.window.ViewScope);
