@@ -1,23 +1,21 @@
 # 开发状态
 
-当前是脱敏后的开发快照，窗口测试 fixture 已改为仓库内的中性测试包。此导出源码与此前开发工作树的源码指纹不同；在当前仓库执行的新验证结果才可作为本快照的证据。
+当前仓库已实现生命周期作用域、资源/视图作用域、窗口 Insets 与监听器所有权、`BoundedMailbox` 有界任务调度，以及可选帧预算、动态资源加载和扩展释放。
 
-已实现生命周期、资源/视图作用域、窗口 Insets 与监听器所有权、有界任务调度，以及可选帧预算、资源加载和扩展退役。模块当前源码版本为 `1.2.0`（`1.0.0`、`1.1.0` 已发布到 Maven Central，Central 上带 `.asc` 签名）；GitHub 制品与 Maven Central 签名发布分别管理，外部桥按独立组件处理。
+## 发布与版本基线
 
-历史开发工作已执行过 host、模拟器和独立消费者验证，但其报告不随本快照导出。此前 SNAPSHOT 源码在独立环境完成 310 项 host 验证，但这不是当前 `1.0.0` 的报告；当前版本必须以重新构建的真实结果为准，原始日志未纳入仓库，新环境应自行重跑。设备、生产签名、发布和真实运行结果必须分别核验；真机验证可按项目发布计划在实际运行中安排，不应将未运行项目写成通过。
+- **Maven Central 状态**：`1.0.0`、`1.1.0` 与 `1.2.0` 均已发布至 Maven Central（含 `.asc` 签名），并由家族 BOM `io.github.jichuo1.meguviz:meguviz-bom:1.2.0` 统一对齐版本号。`1.2.0` 在 `1.1.0`（新增 API 37.2 `MemoryBudgetObserver` 观察桥）的基础上纳入了共享唤醒停摆修复、邮箱结构与关闭/取消路径加固。
+- **家族同版本状态**：MeguvizUI（含 `meguviz-ui-android-bridge` 与 `meguviz-ui-ref-bridge`）、MeguvizRef、MeguvizDrawable（含 `meguviz-drawable-meguviz-android`）、MeguvizHook 与 DexMeguviz 的 `1.2.0` 制品均已发布至 Maven Central；`LumenCoacervationEngine`（含 `lumen-bridge-meguviz-android`）`1.6.2` 也已发布至 Maven Central（`meguviz-ui-lumen-bridge` 与 `meguviz-drawable-lumen` 暂未进 Central，仅支持源码构建）。
+- **Kotlin 工具链与元数据**：自 `1.2.0` 起，仓库根 `build.gradle.kts` 通过 KGP 类路径锚点使用 Kotlin `2.4.21` 编译（不再采用 AGP 默认的 `2.2.10`）。唯一包含 Kotlin 源码的 `android-window` 因此携带 Kotlin `2.4.0` 元数据并依赖 `kotlin-stdlib:2.4.21`；`android-runtime` 与 `android-lifecycle` 为纯 Java 模块。Kotlin `2.2` 编译器可读取已发布的 `1.0.0` / `1.1.0`，无法读取 `1.2.0` 的 `android-window`（需 Kotlin `2.3` 及以上版本）。纯 Java 消费方不受元数据版本限制，仅会传递引入 `kotlin-stdlib:2.4.21`。
+- **编译兼容性说明**：当前组合为 Gradle `9.8.2`、AGP `9.4.1` 与 KGP `2.4.21`，已在本机编译通过，但超出 Kotlin 官方兼容表中 KGP `2.4.21` 的完全支持上限（Gradle `9.7.0`、AGP `9.3.1`），具体环境适配可参考 [Kotlin 兼容表](https://kotlinlang.org/docs/gradle-configure-project.html)。
 
-UI/Ref 正式版本目前为 1.0.0；单独消费者的 Kotlin 2.2 无法读取其 Kotlin 2.4 元数据，使用 Kotlin 2.4.21 锚定工具链后已在本地编译通过。结果不是设备或真实宿主验收；项目本身不会自动引入外部 UI 或反射桥。
+## 源码快照与校验记录
 
-**Kotlin 工具链**：源码 1.2.0 起本仓库用 Kotlin 2.4.21 编译（根 `build.gradle.kts` 的 KGP 类路径锚点，AGP 内置 Kotlin 读取它；不再是 AGP 自带的默认 2.2.10），与 UI、Drawable、Lumen 一致。唯一含 Kotlin 源码的 `android-window` 因此带 Kotlin 2.4.0 元数据，POM 与 Gradle 元数据要求 `kotlin-stdlib:2.4.21`；`android-runtime` 与 `android-lifecycle` 是纯 Java。已发布的 1.0.0、1.1.0 是 Kotlin 2.2.0 元数据（读取已发布字节确认），所以用 Kotlin 2.2 编译的消费者读得了它们，读不了 1.2.0 的 `android-window`，至少需要 Kotlin 2.3（编译器可读高一个版本的规则，未在本仓库实测）。纯 Java 消费者不受元数据影响，但会传递得到 `kotlin-stdlib:2.4.21`。升级只改变编译器：公开 API 描述符不变（`api/*.txt` 无改动），完整 `verifyHost` 在新工具链下通过。样例固定的候选校验值已按新字节重钉：`android-window` 的 AAR 变了，三个模块的 POM 与 Gradle 元数据因 stdlib 版本变了；`android-runtime` 与 `android-lifecycle` 的 AAR 字节不变（不含 Kotlin 编译产物）。
+- 本快照对窗口测试夹具做了中性包名脱敏处理，并在根构建脚本中维持公开 API 边界检查与签名准备入口（缺少真实密钥时本地签名准备任务按预期阻塞）。
+- 样例工程中固定的部分本地候选校验值分别构建于 JDK `25.0.5` 与 JDK `21.0.12`；纯 Java 模块（`android-runtime`、`android-lifecycle`）在两者之间产出一致，而含 Kotlin 产物的 `android-window` 在重钉版本前以 JDK `21.0.12` 构建。
+- 本仓库提供 `scripts/run-gradle.ps1 verifyHost`（要求 JDK `25` 或 `27`）及 `scripts/verify_central_local.py` 用于复现宿主验证与制品元数据核验。
 
-脱敏过程中，测试包与针对特定宿主包名的显式 API 边界检查已换成中性测试包标识。生产代码未加入宿主依赖，但该检查不再覆盖原先所有特定宿主包名；正式发布前应以不暴露私有标识的通用类型边界补足，并重新验证。
+## 适用范围与验证说明
 
-Maven 发布配置已记录本项目 SCM 和开发者身份，当前默认版本为 `1.2.0`（`1.0.0` 与 `1.1.0` 均已发布到 Central；`1.1.0` 于 2026-10-30 发布，新增 API 37.2 内存预算观察桥 `MemoryBudgetObserver`，不含 11-05 的共享唤醒停摆修复。Central 上 `1.1.0` 的 runtime、window、lifecycle 三个 aar 与 module 校验值与此前样例固定的本地候选不同（pom 相同），实际发布的字节并非该候选，原因未在仓库中记录。`1.2.0` 在 `1.1.0` 基础上包含共享唤醒停摆修复与关闭/取消路径加固，尚未发布。样例中固定的是 `1.2.0` 本地候选制品的校验值，最初由 JDK 25.0.5 构建，同源码两次构建字节一致；此前已用同一工具链复现 `1.0.0` 的固定值。2026-11-09 因 Kotlin 工具链升级和异常消息改动而重钉的那部分值是在 JDK 21.0.12 上构建的，尚未在 JDK 25 上复核（Kotlin 升级前后 `android-runtime` 与 `android-lifecycle` 的 AAR 字节没有变化，说明这两个纯 Java 模块在 JDK 25.0.5 与 21 上产出相同；`android-window` 没有这样的对照））。生产准备期间曾在独立环境构建 `1.0.0-rc.1` 并验证四模块及独立 R8 消费；该候选及原始报告不在本仓库，不能将其作为当前源码的正式发布证据。四模块现有本地 JVM 签名参考文档制品和按需签名入口；显式缺密钥时会阻塞。正式 Central 发布仍需可验证的 GPG 签名和实际发布流程。
-
-UI Android 桥目前尚无 Central 正式工件；独立 UI 源码候选已实际消费 Android `1.0.0-rc.1`，其 10 项 host 合同和独立 Maven/R8 消费通过，UI core 解析为中央仓库 `1.0.0`。该本地候选已生成非空 JVM API 参考文档；新增文档变体后独立 Maven/R8 消费再次通过，隔离假密钥测试按预期阻塞。真实签名仍缺失。这只是本地候选证据，不代表完整 UI gate、设备行为、签名或 Central 发布已通过。
-
-工具链风险：现用 Gradle `9.8.2`、AGP `9.4.1` 与 KGP `2.4.21` 的本地组合已编译，但超出 Kotlin 官方表中 KGP 2.4.21 的完全支持上限（Gradle 9.7.0、AGP 9.3.1）。具体使用环境仍需验证，见 [Kotlin 兼容表](https://kotlinlang.org/docs/gradle-configure-project.html)。
-
-下游隔离集成已实际切换到本地 Android `1.0.0-rc.1`，完成 16 项限定 host 合同、无签名 debug、R8、完整依赖图比较与新 DEX 旧依赖引用检查；该结果不是完整下游回归、设备验证或正式部署。
-
-本地 `1.0.0` 无签名预览已完成 Android 四模块与 UI Android 桥的元数据、非空 JVM API 文档和独立 Maven/R8 消费检查。下游隔离集成完成 16 项限定合同、无签名 debug、R8、依赖图及新 DEX 旧依赖引用检查；不是完整下游回归、设备验证或已部署。真实 GPG 签名、验签与 Central 发布仍未执行。
+- 仓库文档中记录的历史宿主单测、隔离消费者（R8 / 依赖图）与模拟器数据，反映对应提交节点在受测环境下的执行快照，不随当前脱敏快照附带原始日志，也不替代目标真机上的实际兼容与性能验收。
+- 新接入或修改源码后，应以当前工程与目标设备重新执行的 `verifyHost` / `verifyDevice` 与业务集成测试结果为准。

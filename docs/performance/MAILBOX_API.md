@@ -1,29 +1,24 @@
 # BoundedMailbox API（有界多线程邮箱）
 
-`android-runtime` 的 `BoundedMailbox` 是**有界、多生产者**的 latest-state + FIFO-command 邮箱，
-也是唯一的跨线程交接点：不引入执行器、无界队列或异步桥。任意线程可直接 `offer*`，
-owner 线程负责帧调度、drain 与生命周期。
+`android-runtime` 的 `BoundedMailbox` 是**有界、多生产者**的 latest-state + FIFO-command 邮箱，也是核心跨线程交接点，不引入额外执行器或无界队列。任意线程可直接调用 `offer*` 提交任务，owner 线程负责帧调度、drain 与生命周期管理。
 
 - 实现：`android-runtime/src/main/java/io/github/jichuo1/meguviz/android/runtime/core/BoundedMailbox.java`
-- 词法/生命周期：`.../core/WorkToken.java`、`.../core/LifecycleScope.java`
-- 帧调度：`.../core/FrameScheduler.java`
-- 多生产者用法与语义：`docs/performance/MULTITHREADED_MAILBOX.md`
+- 令牌与生命周期：`WorkToken.java`、`LifecycleScope.java`
+- 帧调度：`FrameScheduler.java`
+- 多生产者用法与契约：`docs/performance/MULTITHREADED_MAILBOX.md`
 
-## 准入入口
+## 提交入口
 
-每个入口都有两种形式：**完整形式**（带 `release`）与**简写形式**（省略 `release`；
-`offerState` 为 3 参，`offerCommand`/`offerBatch` 为 2 参）。
-简写形式是完整形式的纯委托别名，内部共用一个共享静态 no-op 作为 release，
-因此调用方无需写空 releaser，也不改变任何准入与终止语义。
+每个入口都提供**完整形式**（带 `release` 清理回调）与**简写形式**（省略 `release`：`offerState` 为 3 参，`offerCommand` / `offerBatch` 为 2 参）。简写形式内部复用共享静态空操作 `NOOP_RELEASE`，与完整形式共用同一接收校验与终止释放路径。
 
 | 入口 | 完整形式 | 简写形式 | 语义 |
 | --- | --- | --- | --- |
-| 状态 | `offerState(Slot, WorkToken, Runnable, Runnable)` | `offerState(Slot, WorkToken, Runnable)` | 同 slot 合并为最新值，旧项 `SUPERSEDED` |
-| 命令 | `offerCommand(WorkToken, Runnable, Runnable)` | `offerCommand(WorkToken, Runnable)` | FIFO，按准入顺序执行 |
-| 批量 | `offerBatch(WorkToken, List<Runnable>, Runnable)` | `offerBatch(WorkToken, List<Runnable>)` | 整批原子准入、批内按序；调用方列表被快照 |
+| 状态 | `offerState(Slot, WorkToken, Runnable, Runnable)` | `offerState(Slot, WorkToken, Runnable)` | 同 `Slot` 合并为最新值，旧项状态转为 `SUPERSEDED` |
+| 命令 | `offerCommand(WorkToken, Runnable, Runnable)` | `offerCommand(WorkToken, Runnable)` | FIFO，按接收顺序执行 |
+| 批量 | `offerBatch(WorkToken, List<Runnable>, Runnable)` | `offerBatch(WorkToken, List<Runnable>)` | 整批原子入队、批内按序；入队时快照列表 |
 
 ```java
-// 简写：action 不需要释放调用方资源时。返回的 Submission 必须处理，不能忽略。
+// 简写：action 不持有需显式释放的调用方资源时使用。必须检查返回的 Submission。
 Submission state = box.offerState(slot, token, () -> applyLatest(value));
 if (!state.accepted()) {
     // REJECTED_CAPACITY（背压）/ REJECTED_CLOSED / UNSUPPORTED（slot 不属于该邮箱）
@@ -32,7 +27,6 @@ if (!state.accepted()) {
 
 Submission command = box.offerCommand(token, () -> runInOrder());
 if (!command.accepted()) {
-    // REJECTED_CAPACITY（背压）/ REJECTED_CLOSED / UNSUPPORTED，按调用方策略处理，不要吞掉状态
     return;
 }
 
@@ -41,50 +35,40 @@ if (!batch.accepted()) {
     return;
 }
 
-// 完整形式：action 分配了必须释放的资源时。被拒绝时邮箱不持有该项，release 不会被调用，
-// 调用方必须立即自行清理。
+// 完整形式：action 持有必须释放的资源时使用。被拒收时邮箱不接管该项，release 不会执行，
+// 调用方必须立即自行释放。
 NativeHandle handle = acquire();
 Submission work = box.offerCommand(token, () -> use(handle), handle::release);
 if (!work.accepted()) handle.release();
 ```
 
-`Submission` 返回值不变：`admission()` 为 `ACCEPTED`/`REPLACED`/`REJECTED_CAPACITY`/
-`REJECTED_CLOSED`/`UNSUPPORTED`，`handle()` 用于查询 `Outcome` 与 `cancel()`。
-简写**不会**吞掉 `REJECTED_*`/`UNSUPPORTED` 状态。
+`Submission` 提供 `admission()`（`ACCEPTED` / `REPLACED` / `REJECTED_CAPACITY` / `REJECTED_CLOSED` / `UNSUPPORTED`）与 `handle()`（用于查询 `Outcome` 与调用 `cancel()`），简写形式同样完整返回这些状态。需要一次无交错地提交多项状态/命令时，可使用生产者线程专属的 `BoundedMailbox.Offers`（Kotlin 端可通过 `offers.submitBatch { ... }` 内联调用）。
 
-## 语义
+## 行为语义
 
 | 性质 | 行为 |
 | --- | --- |
-| 每 key latest | 同一 `Slot` 多次 `offerState`：旧项 `SUPERSEDED` 并立即释放，仅最后准入的值被应用一次 |
-| command FIFO | `offerCommand`/`offerBatch` 按准入顺序执行；单生产者的相对顺序严格保持，批内按序 |
-| 背压 | 新 key/命令超过 `stateCapacity`/`commandCapacity` 返回 `REJECTED_CAPACITY`；已存在 key 的替换永远允许（`REPLACED`） |
-| 唤醒合并 | 任意数量跨线程提交只维持一个未决唤醒（`signalPending`）；极端抢占窗口下 owner 队列可能短暂出现同一 `Signal` 的两份，多余的一份因标志早退——不会多请求平台帧，也不漏项 |
-| 释放 | 每个终止项的 release 恰好一次；简写使用共享 no-op，调用方无清理负担，但终止/释放路径与完整形式完全一致 |
-| 异常 | action 抛出 → 该项 `FAILED`、邮箱关闭、其余已准入项全部释放且不执行；错误经 `ErrorSink` 上报 |
-| 关闭 | owner 线程 `close()` 释放全部待决跨线程工作且不执行其 action |
-| 词法 | `WorkToken` 过期（rebind/attach 失效）→ 项 `STALE`，action 不执行 |
-| 所有权 | 非法 slot/token 返回 `UNSUPPORTED`，不转移所有权；`newSlot` 仍仅限 owner 线程 |
+| 每 key latest | 同一 `Slot` 多次 `offerState`：旧项 `SUPERSEDED` 并立即释放，仅最后接收的值被执行一次 |
+| command FIFO | `offerCommand` / `offerBatch` 按入队顺序执行；单生产者的相对顺序严格保持，批内按序 |
+| 背压控制 | 新 key 或命令超过 `stateCapacity` / `commandCapacity` 返回 `REJECTED_CAPACITY`；已存在 key 的替换始终允许（`REPLACED`） |
+| 唤醒合并 | 任意数量跨线程提交仅维持一个未决唤醒（`signalPending`）；极端抢占下多余唤醒会早退，不漏项也不重复请求平台帧 |
+| 资源释放 | 每个已入队终止项的 `release` 恰好执行一次；简写使用空操作不产生外部副作用 |
+| 异常隔离 | `action` 抛出异常时该项标为 `FAILED`、邮箱关闭并释放其余待决项，错误经 `ErrorSink` 上报 |
+| 关闭清理 | owner 线程 `close()` 释放全部待决跨线程工作且不再执行其 `action` |
+| 令牌失效 | `WorkToken` 过期（rebind / attach 失效）后项转为 `STALE`，`action` 不执行 |
+| 所有权校验 | 非法 `Slot` / `WorkToken` 返回 `UNSUPPORTED` 且不转移所有权；`newSlot()` 仅限 owner 线程 |
 
-## 简写的前提
+## 使用简写的前提
 
-简写仅适用于 **action 不需要释放调用方资源** 的场景。它不改变：
+简写形式仅适用于 **`action` 不持有待释放调用方资源** 的场景。它不会绕过 `WorkToken` / `Slot` 归属校验、容量上限或 `close` / `pause` 状态机。若 `action` 持有原生句柄、缓冲区或系统注册项等必须回收的资源，请务必使用完整形式并提供线程安全的 `release`，不要把清理逻辑塞进 `action` 内部（否则在 `STALE` / `SUPERSEDED` / `CLOSED` 时将漏释）。
 
-- `WorkToken` 与 `Slot` 归属校验（`UNSUPPORTED` 仍返回）；
-- 容量拒绝、`close` 后拒绝、`pause`、`STALE` 等状态机；
-- release 的 exactly-once 语义（由共享 no-op 承担，调用方无可观察副作用）；
-- producer 侧 release 的线程安全性要求（简写下由邮箱内部 no-op 执行）。
+## 验证与适用范围
 
-若 action 持有必须释放的资源（原生句柄、缓冲区、注册项等），必须使用完整形式并提供
-线程安全的 release；不要把资源释放塞进 action 来绕过。
-
-## 验证
-
-- `android-runtime/src/test/java/io/github/jichuo1/meguviz/android/runtime/core/MailboxConvenienceContractTest.java`
-  （10 项）逐项对照完整形式与简写：准入/合并/FIFO、容量与 close 拒绝、越权拒绝、多生产者单唤醒与
-  每生产者 FIFO、批内顺序与部分失败、列表快照、stale、superseded/cancel、参数校验。
-- `MailboxContractTest`（23 项）与 `MailboxBackgroundProducerExampleTest`（5 项）继续锁定完整形式语义。
+- `MailboxConvenienceContractTest` 逐项对照完整形式与简写形式的入队合并、FIFO、拒绝语义与终态行为。
+- `MailboxContractTest`、`MailboxOffersEquivalenceTest` 与 `MailboxBackgroundProducerExampleTest` 覆盖并发投递、批量缓冲区等价性、背压及故障隔离。
 
 ```powershell
 ./gradlew :android-runtime:testDebugUnitTest --no-daemon
 ```
+
+上述校验为宿主 JVM 单元测试，真机帧节奏与多线程内存表现须在目标设备上结合业务负载确认。
